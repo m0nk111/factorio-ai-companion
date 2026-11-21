@@ -1,5 +1,11 @@
 local u = require("commands.init")
 local M = {}
+local dispatch
+
+-- Bind after control.lua registers every handler; require is forbidden during events.
+function M.bind_dispatcher(value)
+  dispatch = value
+end
 
 function M.send(player, text, cid)
   text = text:match("^%s*(.-)%s*$")
@@ -15,7 +21,7 @@ function M.send(player, text, cid)
 end
 
 function M.control(player, tool, args)
-  local result = require("commands.dispatch").call(tool, args, player)
+  local result = dispatch.call(tool, args, player)
   if not result.error then
     storage.companion_messages[#storage.companion_messages+1] = {
       player=player.name,tick=game.tick,target_companion=args.companionId,control={tool=tool,args=args}}
