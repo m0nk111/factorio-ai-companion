@@ -1458,9 +1458,7 @@
     "inputSchema": {
       "type": "object",
       "properties": {},
-      "required": [
-        "category"
-      ],
+      "required": [],
       "additionalProperties": false
     }
   },
