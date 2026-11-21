@@ -102,11 +102,31 @@ test("Lua: hand crafting distinguishes locked recipes, machine categories and mi
   run(`
   entity.force.recipes.gear.enabled=false
   assert(queues.start_craft(1,"gear",1).error:find("locked"))
-  entity.force.recipes.gear.enabled=true; prototypes.recipe.gear.category="smelting"
+  entity.force.recipes.gear.enabled=true; prototypes.recipe.gear.categories={"smelting"}
   assert(queues.start_craft(1,"gear",1).error:find("not hand%-craftable"))
-  prototypes.recipe.gear.category="crafting";items.plate=0
+  prototypes.recipe.gear.categories={"crafting"};items.plate=0
   assert(queues.start_craft(1,"gear",1).error=="Missing ingredients")
   assert(not storage.craft_queues[1] and entity.crafting_queue_size==0)
+`));
+
+test("Lua: 2.1 recipe categories support any hand-crafting match without reading category", () =>
+  run(`
+  local recipe=prototypes.recipe.gear
+  recipe.categories={"smelting","crafting"}
+  setmetatable(recipe,{__index=function(_,key)
+    if key=="category" then error("LuaRecipePrototype does not contain category") end
+  end})
+  local capabilities=require("commands.capabilities")
+  assert(not capabilities.craft_error(entity,"gear"))
+  local result;u.json_response=function(value) result=value end
+  u.handlers.companion_capabilities{companionId=1,recipe="gear"}
+  assert(result.recipe.hand_craftable and result.recipe.craftable==10)
+  assert(result.recipe.categories[1]=="smelting" and result.recipe.categories[2]=="crafting")
+  assert(result.recipe.category==nil)
+  recipe.categories={"smelting","chemistry"}
+  assert(capabilities.craft_error(entity,"gear"):find("smelting, chemistry",1,true))
+  recipe.categories={"crafting"};recipe.ingredients={{type="fluid",name="water",amount=1}}
+  assert(capabilities.craft_error(entity,"gear"):find("fluids"))
 `));
 
 test("Lua: rotation targets the machine instead of a mod helper at the same position", () =>
@@ -402,7 +422,7 @@ test("Lua: task fuel selects the nearest burner and fails clearly without a targ
 test("Lua: procurement collects matching furnace output beyond an empty nearer machine", () =>
   run(`
   local procurement=require("commands.task_pool_ensure_item")
-  prototypes.recipe["iron-plate"]={category="smelting",ingredients={{name="iron-ore",amount=1}},products={{name="iron-plate",amount=1}}}
+  prototypes.recipe["iron-plate"]={categories={"smelting"},ingredients={{name="iron-ore",amount=1}},products={{name="iron-plate",amount=1}}}
   local counts={0,2}
   local function furnace(x,index)
     return {valid=true,position={x=x,y=0},get_recipe=function() return prototypes.recipe["iron-plate"] end,
@@ -635,16 +655,20 @@ test("Lua: overlay controls use validated commands and send a cancellation event
   for name,def in pairs(require("commands.contract")) do
     if def.execution=="game" and not u.handlers[name] then u.handlers[name]=function() u.json_response{} end end
   end
+  local dispatch=require("commands.dispatch")
+  require("commands.player_input").bind_dispatcher(dispatch)
+  local lifecycle=require("commands.lifecycle")
   u.handlers.companion_stop=function(args)
     calls[#calls+1]=args.companionId
-    require("commands.lifecycle").stop(args.companionId)
+    lifecycle.stop(args.companionId)
     u.json_response{stopped=true}
   end
   storage.walking_queues[1]={target={x=10,y=0}}
+  require=function() error("Require cannot be used outside control.lua parsing") end
   click(panel().roster.companion_1.action_2)
   assert(#calls==1 and not storage.walking_queues[1])
   assert(storage.companion_messages[1].control.tool=="companion_stop")
-  local bad=require("commands.dispatch").call("companion_stop",{companionId=-1})
+  local bad=dispatch.call("companion_stop",{companionId=-1})
   assert(bad.error and #calls==1,"GUI calls must validate the same schema as MCP")
   u.handlers.companion_spawn=function(args,origin)
     assert(origin==player and args.companionId==2 and args.name=="Almendra")

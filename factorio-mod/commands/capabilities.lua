@@ -6,8 +6,13 @@ function M.craft_error(entity, name)
   if not recipe then return "Unknown recipe: " .. name end
   local unlocked = entity.force.recipes[name]
   if not unlocked or not unlocked.enabled then return "Recipe is locked: " .. name end
-  if not (entity.prototype.crafting_categories or {})[recipe.category] then
-    return "Recipe is not hand-craftable; needs a machine for category " .. recipe.category
+  local hand_categories = entity.prototype.crafting_categories or {}
+  local hand_craftable = false
+  for _, category in ipairs(recipe.categories) do
+    if hand_categories[category] then hand_craftable = true; break end
+  end
+  if not hand_craftable then
+    return "Recipe is not hand-craftable; needs a machine for categories " .. table.concat(recipe.categories, ", ")
   end
   for _, ingredient in ipairs(recipe.ingredients) do
     if ingredient.type == "fluid" then return "Recipe requires fluids and a machine: " .. name end
@@ -42,7 +47,7 @@ u.register("companion_capabilities", function(args)
       local recipe = prototypes.recipe[args.recipe]
       if not recipe then u.error_response("Unknown recipe: " .. args.recipe); return end
       local error = M.craft_error(c.entity,args.recipe)
-      result.recipe = {name=args.recipe, category=recipe.category, ingredients=recipe.ingredients,
+      result.recipe = {name=args.recipe, categories=recipe.categories, ingredients=recipe.ingredients,
         products=recipe.products, hand_craftable=not error, reason=error,
         craftable=not error and c.entity.get_craftable_count(args.recipe) or 0}
     end
