@@ -21,6 +21,8 @@ type Pending = {
   bytes: number;
   /** The barrier answered before the command produced any output. */
   barrierSeen: boolean;
+  /** Whole-request budget, so no settle window can outlive it. */
+  requestTimeoutMs: number;
   settle?: ReturnType<typeof setTimeout>;
   timer: ReturnType<typeof setTimeout>;
   resolve: (value: string) => void;
@@ -47,6 +49,11 @@ export class RCONClient {
      * queued `/fac_api` may complete on a later tick, so the command's own reply can
      * arrive after the barrier. Chunks reset the window; it never decides that a
      * command without output succeeded.
+     *
+     * Limitation: RCON has no end-of-reply marker, so a gap between packets of ONE
+     * logical reply longer than this window would close the request early and return a
+     * truncated body as success. Keep it well above any realistic packet gap; raise it
+     * if a reply is ever observed arriving in slow, widely spaced packets.
      */
     private readonly lateBodySettleMs = 200,
     /**
@@ -162,6 +169,7 @@ export class RCONClient {
         chunks: [],
         bytes: 0,
         barrierSeen: false,
+        requestTimeoutMs: timeoutMs,
         timer,
         resolve,
         reject,
@@ -202,7 +210,8 @@ export class RCONClient {
         if (id === pending.id && type === 2) this.finish("");
       } else if (id === pending.barrier) {
         pending.barrierSeen = true;
-        // Normal path: the command already answered, so nothing more can follow it.
+        // Normal path: the command already answered. A tail that somehow trails the
+        // barrier is not recoverable, because RCON offers no terminator to wait for.
         if (pending.bytes > 0) this.finish(this.collected(pending));
         // Otherwise the command may still complete on a later tick: wait for its own reply
         // instead of turning a missing answer into an empty successful response.
@@ -233,19 +242,21 @@ export class RCONClient {
   private settle(pending: Pending): void {
     if (pending.settle) clearTimeout(pending.settle);
     const awaitingFirstChunk = pending.bytes === 0;
-    pending.settle = setTimeout(
-      () => {
-        if (this.pending !== pending) return;
-        if (pending.bytes > 0) this.finish(this.collected(pending));
-        else
-          this.fail(
-            new Error(
-              `RCON: the command produced no reply within ${this.missingReplyMs} ms after the barrier answered; outcome unknown, command not retried`,
-            ),
-          );
-      },
-      awaitingFirstChunk ? this.missingReplyMs : this.lateBodySettleMs,
-    );
+    // Never let a settle window outlive the request budget it belongs to.
+    const budget = Math.min(this.missingReplyMs, pending.requestTimeoutMs);
+    const window = awaitingFirstChunk
+      ? budget
+      : Math.min(this.lateBodySettleMs, pending.requestTimeoutMs);
+    pending.settle = setTimeout(() => {
+      if (this.pending !== pending) return;
+      if (pending.bytes > 0) this.finish(this.collected(pending));
+      else
+        this.fail(
+          new Error(
+            `RCON: the command produced no reply within ${budget} ms after the barrier answered; outcome unknown, command not retried`,
+          ),
+        );
+    }, window);
   }
 
   private finish(data: string): void {

@@ -7,8 +7,7 @@ import type { RCONClient as RCONClientType } from "../src/rcon/client";
 
 async function fixture(
   handler: (socket: Socket, id: number, type: number, text: string) => void,
-  settleMs = 20,
-  missingReplyMs = 60,
+  { timeoutMs = 2000, settleMs = 200, missingReplyMs = 500 } = {},
 ) {
   const sockets = new Set<Socket>();
   const server = createServer((socket) => {
@@ -33,7 +32,7 @@ async function fixture(
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const client = new RCONClient(
     { host: "127.0.0.1", port: (server.address() as { port: number }).port, password: "test" },
-    150,
+    timeoutMs,
     settleMs,
     missingReplyMs,
   );
@@ -104,11 +103,14 @@ test("RCON rejects authentication failures and malformed packets", async () => {
 test("an uncertain timed-out mutation is never retried; next command reconnects", async () => {
   let mutations = 0;
   let recovering = false;
-  const f = await fixture((socket, id, type, text) => {
-    if (type === 3) socket.write(encodePacket(id, 2, ""));
-    else if (text === "mutate") mutations++;
-    else if (recovering) socket.write(encodePacket(id, 0, text === "read" ? "ok" : "2.0.77"));
-  });
+  const f = await fixture(
+    (socket, id, type, text) => {
+      if (type === 3) socket.write(encodePacket(id, 2, ""));
+      else if (text === "mutate") mutations++;
+      else if (recovering) socket.write(encodePacket(id, 0, text === "read" ? "ok" : "2.0.77"));
+    },
+    { timeoutMs: 150, missingReplyMs: 60 },
+  );
   try {
     expect((await f.client.sendCommand("mutate")).error).toContain("outcome unknown");
     expect(mutations).toBe(1);
