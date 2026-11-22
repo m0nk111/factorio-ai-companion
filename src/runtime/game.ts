@@ -91,9 +91,14 @@ export class GameBridge {
         return { success: false, data, error: String(data.error) };
       return { success: true, data };
     } catch {
+      // Empty reply is not a handler failure: the command may have executed while its
+      // output never reached this interface. Never report it as a silent success, and
+      // never retry a mutation on it.
       return {
         success: false,
-        error: `Invalid mod response: ${response.data.slice(0, 500) || "empty reply"}`,
+        error: response.data
+          ? `Invalid mod response: ${response.data.slice(0, 500)}`
+          : "No reply from the companion (outcome unknown): the command may have executed; verify state before retrying",
       };
     }
   }
