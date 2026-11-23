@@ -951,7 +951,7 @@
     }
   },
   "building_info": {
-    "description": "Get building info at coordinates",
+    "description": "Inspect the building at (x,y): the entity on that tile, otherwise the closest building within 2 tiles of it. Those 2 tiles are a SEARCH radius around the position, not a working distance; the reply names the resolved building and its position.",
     "execution": "game",
     "effect": "read",
     "inputSchema": {
@@ -982,7 +982,7 @@
     }
   },
   "building_rotate": {
-    "description": "Rotate a building at coordinates",
+    "description": "Rotate the building at (x,y): the rotatable entity on that tile, otherwise the closest rotatable building within 1 tile. That 1 tile is a SEARCH radius around the position, and the companion must be within its reach distance.",
     "execution": "game",
     "effect": "act",
     "inputSchema": {
@@ -1056,7 +1056,7 @@
     }
   },
   "building_fuel": {
-    "description": "Add fuel to nearby entity (burner, furnace, etc) - companion must be within 3 tiles",
+    "description": "Add fuel to every burner (furnace, boiler, inserter, car, locomotive, mining drill) within 6 tiles of the companion (the mod's fuel_reach setting). Those 6 tiles are a SEARCH radius around the companion, not a per-building distance, and the command takes no coordinates.",
     "execution": "game",
     "effect": "act",
     "inputSchema": {
@@ -1097,7 +1097,7 @@
     }
   },
   "building_empty": {
-    "description": "Extract items from nearby entity into companion inventory (radius 5)",
+    "description": "Extract items from the building at (x,y) into the companion inventory. The building on that tile wins; otherwise the closest building within 5 tiles of (x,y) is used. Those 5 tiles are a SEARCH radius around the position, not a working distance: the companion must be within its reach distance (~10 tiles) of the resolved building. Every reply names the resolved building and its position.",
     "execution": "game",
     "effect": "act",
     "inputSchema": {
@@ -1150,7 +1150,7 @@
     }
   },
   "building_fill": {
-    "description": "Fill nearby entity with items from companion inventory (radius 3)",
+    "description": "Insert items from the companion inventory into the building at (x,y). The building on that tile wins; otherwise the closest building within 3 tiles of (x,y) is used. Those 3 tiles are a SEARCH radius around the position, not a working distance: the companion must be within its reach distance (~10 tiles) of the resolved building. Every reply names the resolved building and its position.",
     "execution": "game",
     "effect": "act",
     "inputSchema": {
@@ -1484,9 +1484,9 @@
         "radius": {
           "default": 48,
           "type": "integer",
-          "minimum": 8,
+          "minimum": 1,
           "maximum": 96,
-          "description": "Observation radius in tiles"
+          "description": "Observation radius in tiles. The game clamps the observation window to 8..96 tiles, so a smaller request still returns a valid clamped snapshot instead of failing validation."
         }
       },
       "required": [

@@ -27,6 +27,27 @@ test("contract rejects unknown tools, extra arguments and invalid limits", () =>
   expect(() => validateToolArgs("task_submit", { companionId: 1, steps: "[]" })).toThrow();
   expect(validateToolArgs("world_observe", {})).toMatchObject({ companionId: 0, radius: 48 });
 });
+test("a small observation radius reaches the game and the schema advertises its clamp", () => {
+  expect(validateToolArgs("world_observe", { radius: 5 })).toMatchObject({ radius: 5 });
+  const radius = COMMANDS.world_observe!.inputSchema.properties.radius!;
+  expect({ minimum: radius.minimum, maximum: radius.maximum, default: radius.default }).toEqual({
+    minimum: 1,
+    maximum: 96,
+    default: 48,
+  });
+  expect(String(radius.description)).toContain("8..96");
+  expect(() => validateToolArgs("world_observe", { radius: 0 })).toThrow();
+  expect(() => validateToolArgs("world_observe", { radius: 97 })).toThrow();
+});
+test("targeting commands describe their radius as a search radius", () => {
+  for (const name of ["building_fill", "building_empty", "building_info", "building_fuel"])
+    expect(COMMANDS[name]!.description).toContain("SEARCH radius");
+  expect(COMMANDS.building_fill!.description).toContain("3 tiles");
+  expect(COMMANDS.building_empty!.description).toContain("5 tiles");
+  expect(COMMANDS.building_info!.description).toContain("2 tiles");
+  expect(COMMANDS.building_fill!.description).toContain("reach distance");
+  expect(COMMANDS.building_empty!.description).toContain("reach distance");
+});
 test("environment configuration rejects invalid values and uses one set of defaults", () => {
   expect(readSettings({}).FACTORIO_RCON_PORT).toBe(34198);
   expect(() => readSettings({ COMPANION_PORT: "NaN" })).toThrow();
