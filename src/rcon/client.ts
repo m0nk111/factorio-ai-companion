@@ -19,6 +19,11 @@ type Pending = {
   barrier?: number;
   chunks: Buffer[];
   bytes: number;
+  /** The barrier answered before the command produced any output. */
+  barrierSeen: boolean;
+  /** Whole-request budget, so no settle window can outlive it. */
+  requestTimeoutMs: number;
+  settle?: ReturnType<typeof setTimeout>;
   timer: ReturnType<typeof setTimeout>;
   resolve: (value: string) => void;
   reject: (reason: Error) => void;
@@ -38,8 +43,33 @@ export class RCONClient {
   constructor(
     private readonly config: RCONConfig,
     private readonly timeoutMs = 5000,
+    /**
+     * Quiet window used only when the barrier answers before the command produced any
+     * output. Factorio answers built-in commands like `/version` immediately while a
+     * queued `/fac_api` may complete on a later tick, so the command's own reply can
+     * arrive after the barrier. Chunks reset the window; it never decides that a
+     * command without output succeeded.
+     *
+     * Limitation: RCON has no end-of-reply marker, so a gap between packets of ONE
+     * logical reply longer than this window would close the request early and return a
+     * truncated body as success. Keep it well above any realistic packet gap; raise it
+     * if a reply is ever observed arriving in slow, widely spaced packets.
+     */
+    private readonly lateBodySettleMs = 200,
+    /**
+     * Upper bound for waiting on the first chunk when the barrier already answered. A
+     * command that stays silent beyond it is reported as an unknown outcome instead of
+     * hanging until the request timeout.
+     */
+    private readonly missingReplyMs = 2000,
   ) {
     validateRCONConfig(config);
+    for (const [name, value] of [
+      ["lateBodySettleMs", lateBodySettleMs],
+      ["missingReplyMs", missingReplyMs],
+    ] as const)
+      if (!Number.isFinite(value) || value < 0)
+        throw new Error(`${name} must be a finite non-negative number`);
   }
 
   async connect(): Promise<void> {
@@ -121,14 +151,29 @@ export class RCONClient {
       // Factorio processes commands in order; a harmless built-in command delimits replies.
       // Factorio ignores empty commands and rejects Source RESPONSE_VALUE probes.
       const barrier = type === 2 ? this.nextId++ : undefined;
-      const timer = setTimeout(
-        () =>
-          this.fail(
-            new Error(`RCON timeout after ${timeoutMs} ms; outcome unknown, command not retried`),
+      const timer = setTimeout(() => {
+        // A barrier that answered while the command produced nothing is a distinct
+        // outcome: the mod did run, its reply never reached this interface.
+        const missingReply = this.pending?.barrierSeen && this.pending.bytes === 0;
+        this.fail(
+          new Error(
+            missingReply
+              ? `RCON timeout after ${timeoutMs} ms; the command produced no reply after the barrier answered; outcome unknown, command not retried`
+              : `RCON timeout after ${timeoutMs} ms; outcome unknown, command not retried`,
           ),
-        timeoutMs,
-      );
-      this.pending = { id, barrier, chunks: [], bytes: 0, timer, resolve, reject };
+        );
+      }, timeoutMs);
+      this.pending = {
+        id,
+        barrier,
+        chunks: [],
+        bytes: 0,
+        barrierSeen: false,
+        requestTimeoutMs: timeoutMs,
+        timer,
+        resolve,
+        reject,
+      };
       if (!this.socket || this.socket.destroyed) {
         this.fail(new Error("RCON socket closed"));
         return;
@@ -164,7 +209,13 @@ export class RCONClient {
       if (pending.barrier === undefined) {
         if (id === pending.id && type === 2) this.finish("");
       } else if (id === pending.barrier) {
-        this.finish(Buffer.concat(pending.chunks).toString("utf8"));
+        pending.barrierSeen = true;
+        // Normal path: the command already answered. A tail that somehow trails the
+        // barrier is not recoverable, because RCON offers no terminator to wait for.
+        if (pending.bytes > 0) this.finish(this.collected(pending));
+        // Otherwise the command may still complete on a later tick: wait for its own reply
+        // instead of turning a missing answer into an empty successful response.
+        else this.settle(pending);
       } else if (id === pending.id && type === 0) {
         const body = packet.subarray(12, packet.length - 2);
         pending.bytes += body.length;
@@ -173,14 +224,46 @@ export class RCONClient {
           return;
         }
         pending.chunks.push(body);
+        if (pending.barrierSeen) this.settle(pending);
       }
     }
+  }
+
+  private collected(pending: Pending): string {
+    return Buffer.concat(pending.chunks).toString("utf8");
+  }
+
+  /**
+   * Resolve a request whose barrier answered before the command's own reply: either the
+   * reply is still arriving (close it once quiet for {@link lateBodySettleMs}) or it never
+   * arrives (fail as unknown after {@link missingReplyMs}). Every new chunk restarts the
+   * window, so a slow multi-packet reply is never truncated.
+   */
+  private settle(pending: Pending): void {
+    if (pending.settle) clearTimeout(pending.settle);
+    const awaitingFirstChunk = pending.bytes === 0;
+    // Never let a settle window outlive the request budget it belongs to.
+    const budget = Math.min(this.missingReplyMs, pending.requestTimeoutMs);
+    const window = awaitingFirstChunk
+      ? budget
+      : Math.min(this.lateBodySettleMs, pending.requestTimeoutMs);
+    pending.settle = setTimeout(() => {
+      if (this.pending !== pending) return;
+      if (pending.bytes > 0) this.finish(this.collected(pending));
+      else
+        this.fail(
+          new Error(
+            `RCON: the command produced no reply within ${budget} ms after the barrier answered; outcome unknown, command not retried`,
+          ),
+        );
+    }, window);
   }
 
   private finish(data: string): void {
     const pending = this.pending;
     this.pending = null;
     if (pending) {
+      if (pending.settle) clearTimeout(pending.settle);
       clearTimeout(pending.timer);
       pending.resolve(data);
     }
@@ -191,6 +274,7 @@ export class RCONClient {
     const pending = this.pending;
     this.pending = null;
     if (pending) {
+      if (pending.settle) clearTimeout(pending.settle);
       clearTimeout(pending.timer);
       pending.reject(error);
     }
