@@ -54,6 +54,11 @@ test("modern MCP HTTP exposes the canonical tools and rejects unauthenticated/le
     expect(list.tools.map((tool) => ({ name: tool.name, description: tool.description }))).toEqual(
       generateToolSchemas().map((tool) => ({ name: tool.name, description: tool.description })),
     );
+    // The wire schema is what rejected Factorio 2.x directions with "must be <= 3".
+    const canPlace = list.tools.find((tool) => tool.name === "building_can_place")!;
+    expect(canPlace.inputSchema).toMatchObject({
+      properties: { direction: { minimum: 0, maximum: 15 } },
+    });
     const status = await client.callTool({ name: "session_status", arguments: {} });
     expect(status.isError).toBe(false);
     const failed = await client.callTool({
