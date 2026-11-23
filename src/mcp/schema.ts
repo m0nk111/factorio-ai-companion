@@ -22,6 +22,10 @@ const validators = new Map(
   ]),
 );
 const CARDINALS = 4;
+/** Property names that carry a Factorio direction; both are normalized before dispatch. */
+const DIRECTION_KEYS = new Set(["dir", "direction"]);
+/** Keywords whose branches all describe the same value, so each branch is walked. */
+const UNION_KEYS = ["oneOf", "anyOf", "allOf"] as const;
 /**
  * Models speak Factorio 2.x's 16-way `defines.direction` (north=0, east=4, south=8,
  * west=12, diagonals in between), while the mod's handlers index the 0-3 cardinal map in
@@ -31,7 +35,11 @@ const CARDINALS = 4;
 export function normalizeDirection(direction: number): number {
   return direction < CARDINALS ? direction : Math.floor(direction / CARDINALS) % CARDINALS;
 }
-/** Normalize every `direction` property in a parsed argument tree, nested ones included. */
+/**
+ * Normalize every direction-bearing property in a parsed argument tree, nested ones included.
+ * Arrays walk their items and union branches walk the same value, which is how
+ * `task_submit.steps.items.oneOf[].dir` and its `candidates[].dir` are reached.
+ */
 function normalizeDirections(schema: Record<string, unknown>, value: unknown): void {
   if (schema.type === "array") {
     const items = schema.items as Record<string, unknown> | undefined;
@@ -39,12 +47,15 @@ function normalizeDirections(schema: Record<string, unknown>, value: unknown): v
       for (const item of Array.isArray(value) ? value : []) normalizeDirections(items, item);
     return;
   }
+  for (const keyword of UNION_KEYS)
+    for (const branch of (schema[keyword] as Record<string, unknown>[] | undefined) ?? [])
+      normalizeDirections(branch, value);
   if (schema.type !== "object" || typeof value !== "object" || value === null) return;
   const properties = (schema.properties ?? {}) as Record<string, Record<string, unknown>>;
   for (const [key, property] of Object.entries(properties)) {
     const field = (value as Record<string, unknown>)[key];
     if (field === undefined) continue;
-    if (key === "direction" && typeof field === "number")
+    if (DIRECTION_KEYS.has(key) && typeof field === "number")
       (value as Record<string, unknown>)[key] = normalizeDirection(field);
     else normalizeDirections(property, field);
   }

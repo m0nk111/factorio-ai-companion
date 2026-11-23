@@ -137,3 +137,89 @@ test("directions outside 0-15 are rejected, not silently clamped", () => {
   expect(() => validateToolArgs("building_can_place", build(-1))).toThrow(/>=0/);
   expect(() => validateToolArgs("building_can_place", build(4.5))).toThrow(/expected int/);
 });
+
+// `task_submit` names the same concept `dir`, so it needs the same widening: the `place` step
+// carries `dir` and `candidates[].dir`, both indexed as 0-3 cardinals by
+// `factorio-mod/commands/task_pool.lua`.
+type PlaceArgs = {
+  companionId: number;
+  steps: {
+    type: string;
+    entity: string;
+    x?: number;
+    y?: number;
+    dir?: number;
+    candidates?: { x: number; y: number; dir?: number }[];
+  }[];
+};
+
+const placeStep = (dir: number): PlaceArgs => ({
+  companionId: 1,
+  steps: [{ type: "place", entity: "wooden-chest", x: 0.5, y: 0.5, dir }],
+});
+
+function placeStepArgs(args: Args): PlaceArgs["steps"][number] {
+  return (args.steps as PlaceArgs["steps"])[0]!;
+}
+
+/** Both `dir` properties of `task_submit`, walking its `steps.items.oneOf` branches. */
+function dirProperties(): Schema[] {
+  const found: Schema[] = [];
+  const walk = (schema: Schema) => {
+    if (schema.type === "array") {
+      if (schema.items) walk(schema.items as Schema);
+      return;
+    }
+    for (const keyword of ["oneOf", "anyOf", "allOf"])
+      for (const branch of (schema[keyword] as Schema[] | undefined) ?? []) walk(branch);
+    for (const [key, property] of Object.entries(
+      (schema.properties ?? {}) as Record<string, Schema>,
+    ))
+      if (key === "dir") found.push(property);
+      else walk(property);
+  };
+  walk(COMMANDS.task_submit!.inputSchema as unknown as Schema);
+  return found;
+}
+
+test("every task_submit dir property accepts the 16 Factorio 2.x values", () => {
+  const properties = dirProperties();
+  expect(properties).toHaveLength(2);
+  for (const schema of properties)
+    expect({ range: [schema.minimum, schema.maximum], documented: schema.description }).toEqual({
+      range: [0, 15],
+      documented: expect.stringContaining("16-way"),
+    });
+});
+
+test("task_submit step dir reaches the game as the 0-3 cardinal the mod handles", () => {
+  const normalized = (dir: number) =>
+    placeStepArgs(validateToolArgs("task_submit", placeStep(dir))).dir;
+  // Cardinal input is untouched; 16-way input folds onto the cardinal map.
+  expect([0, 1, 2, 3].map((dir) => normalized(dir))).toEqual([0, 1, 2, 3]);
+  expect([4, 8, 12].map((dir) => normalized(dir))).toEqual([1, 2, 3]);
+  const command = buildRCONCommand("task_submit", placeStep(8));
+  expect(JSON.parse(command.slice("/fac_api ".length)).args.steps[0].dir).toBe(2);
+});
+
+test("task_submit candidate dir is normalized per candidate", () => {
+  const args = validateToolArgs("task_submit", {
+    companionId: 1,
+    steps: [
+      {
+        type: "place",
+        entity: "wooden-chest",
+        candidates: [
+          { x: 0.5, y: 0.5, dir: 12 },
+          { x: 1.5, y: 0.5, dir: 4 },
+        ],
+      },
+    ],
+  });
+  expect(placeStepArgs(args).candidates!.map((candidate) => candidate.dir)).toEqual([3, 1]);
+});
+
+test("task_submit dirs outside 0-15 are rejected, not silently clamped", () => {
+  expect(() => validateToolArgs("task_submit", placeStep(16))).toThrow(/<=15/);
+  expect(() => validateToolArgs("task_submit", placeStep(-1))).toThrow(/>=0/);
+});
