@@ -163,7 +163,7 @@ u.register("companion_inventory", function(args)
     if not id then u.not_found(); return end
     local x, y = tonumber(args.x), tonumber(args.y)
     if x and y then
-      local t = entity_info.nearest(c.entity.surface,{x=x,y=y},2)
+      local t = entity_info.resolve(c.entity.surface,{x=x,y=y},2)
       if not t then u.json_response({id = id, error = "No entity"}); return end
       local items = {}
       for _, group in ipairs(entity_info.inventories(t)) do

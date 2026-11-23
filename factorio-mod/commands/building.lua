@@ -106,7 +106,7 @@ u.register("building_rotate", function(args)
     if not id then u.not_found(); return end
     local x, y, dir = tonumber(args.x), tonumber(args.y), tonumber(args.direction)
     if not x or not y then u.error_response("Invalid coordinates"); return end
-    local t = entity_info.nearest(c.entity.surface,{x=x,y=y},1,function(e) return e.rotatable end)
+    local t = entity_info.resolve(c.entity.surface,{x=x,y=y},1,function(e) return e.rotatable end)
     if not t then u.json_response({id = id, error = "No rotatable entity"}); return end
     if u.distance(c.entity.position, t.position) > (c.entity.reach_distance or 10) then
       u.json_response({id = id, error = "Too far"}); return   -- must be in reach to rotate (no action-at-a-distance)
@@ -126,8 +126,12 @@ u.register("building_info", function(args)
     if not id then u.not_found(); return end
     local x, y = tonumber(args.x), tonumber(args.y)
     if not x or not y then u.error_response("Invalid coordinates"); return end
-    local t = entity_info.nearest(c.entity.surface,{x=x,y=y},2)
-    if not t then u.json_response({id = id, error = "Not found"}); return end
+    local pos, radius = {x=x,y=y}, 2
+    local t = entity_info.resolve(c.entity.surface,pos,radius)
+    if not t then
+      u.json_response({id = id, error = "No building at " .. entity_info.point(pos) ..
+        " or within " .. radius .. " tiles (search radius)"}); return
+    end
     u.json_response({id = id, entity = entity_info.describe(t, true)})
   end)
 end)
@@ -182,26 +186,42 @@ u.register("building_empty", function(args)
     if not id then u.not_found(); return end
     local item, count = args.itemName, tonumber(args.count) or 10
     local pos = (tonumber(args.x) and tonumber(args.y)) and {x = tonumber(args.x), y = tonumber(args.y)} or c.entity.position
-    if u.distance(c.entity.position, pos) > (c.entity.reach_distance or 10) then
-      u.json_response({id = id, error = "Too far"}); return   -- must be in reach to extract (no action-at-a-distance)
+    local radius = 5
+    -- Resolve first: the building on the requested tile is the one the caller asked about, and
+    -- every reply names it instead of leaving the target implicit.
+    local target = entity_info.resolve(c.entity.surface,pos,radius)
+    local into, resolved = target and target.name, entity_info.summary(target)
+    if not target then
+      u.json_response({id = id, extracted = 0, item = item, target = nil,
+        error = "No building at " .. entity_info.point(pos) .. " or within " .. radius .. " tiles (search radius)"})
+      return
     end
-    local target = entity_info.nearest(c.entity.surface,pos,5)
+    local reach, dist = c.entity.reach_distance or 10, u.distance(c.entity.position, target.position)
+    if dist > reach then
+      u.json_response({id = id, extracted = 0, item = item, into = into, target = resolved,
+        error = "Too far: " .. entity_info.label(target) .. " is " .. string.format("%.1f", dist) ..
+          " tiles from the companion (reach " .. reach .. ")"})
+      return
+    end
     local ext = 0
-    if target then
-      for _, group in ipairs(entity_info.inventories(target)) do
-        local inv = group.inventory
-        for _, stack in ipairs(u.inventory_contents(inv)) do
-          if stack.name == item and ext < count then
-            local rm = inv.remove{name=item,count=math.min(count-ext,stack.count),quality=stack.quality}
-            local ins = c.entity.insert{name=item,count=rm,quality=stack.quality}
-            if ins < rm then inv.insert{name=item,count=rm-ins,quality=stack.quality} end
-            ext = ext + ins
-          end
+    for _, group in ipairs(entity_info.inventories(target)) do
+      local inv = group.inventory
+      for _, stack in ipairs(u.inventory_contents(inv)) do
+        if stack.name == item and ext < count then
+          local rm = inv.remove{name=item,count=math.min(count-ext,stack.count),quality=stack.quality}
+          local ins = c.entity.insert{name=item,count=rm,quality=stack.quality}
+          if ins < rm then inv.insert{name=item,count=rm-ins,quality=stack.quality} end
+          ext = ext + ins
         end
-        if ext >= count then break end
       end
+      if ext >= count then break end
     end
-    u.json_response({id = id, extracted = ext, item = item})
+    if ext > 0 then u.json_response({id = id, extracted = ext, item = item, into = into, target = resolved})
+    else
+      u.json_response({id = id, extracted = 0, item = item, into = into, target = resolved,
+        error = "Extracted nothing: " .. entity_info.label(target) .. " holds no " .. item ..
+          " (or the companion inventory is full)"})
+    end
   end)
 end)
 
@@ -251,20 +271,40 @@ u.register("building_fill", function(args)
     if not id then u.not_found(); return end
     local item, count = args.itemName, tonumber(args.count) or 10
     local pos = (tonumber(args.x) and tonumber(args.y)) and {x = tonumber(args.x), y = tonumber(args.y)} or c.entity.position
-    if u.distance(c.entity.position, pos) > (c.entity.reach_distance or 10) then
-      u.json_response({id = id, error = "Too far"}); return   -- must be in reach to load a machine
+    local radius = 3
+    -- Resolve first: the building on the requested tile is the one the caller asked about, and
+    -- every reply names it instead of leaving the target implicit.
+    local target = entity_info.resolve(c.entity.surface,pos,radius)
+    local into, resolved = target and target.name, entity_info.summary(target)
+    if not target then
+      u.json_response({id = id, inserted = 0, item = item, target = nil,
+        error = "No building at " .. entity_info.point(pos) .. " or within " .. radius .. " tiles (search radius)"})
+      return
+    end
+    local reach, dist = c.entity.reach_distance or 10, u.distance(c.entity.position, target.position)
+    if dist > reach then
+      u.json_response({id = id, inserted = 0, item = item, into = into, target = resolved,
+        error = "Too far: " .. entity_info.label(target) .. " is " .. string.format("%.1f", dist) ..
+          " tiles from the companion (reach " .. reach .. ")"})
+      return
     end
     local inv = c.entity.get_inventory(defines.inventory.character_main)
     local have = inv.get_item_count(item)
-    if have == 0 then u.json_response({id = id, error = "No " .. item}); return end
-    local target = entity_info.nearest(c.entity.surface,pos,3)
-    local ins = 0
-    if target then
-      local r = target.insert{name = item, count = math.min(count, have)}
-      if r > 0 then inv.remove{name = item, count = r}; ins = r end
+    if have == 0 then
+      u.json_response({id = id, inserted = 0, item = item, into = into, target = resolved,
+        error = "No " .. item .. " in the companion inventory for " .. entity_info.label(target)})
+      return
     end
-    if ins > 0 then u.json_response({id = id, inserted = ins, item = item, into = target and target.name})
-    else u.json_response({id = id, error = "Could not insert"}) end
+    local r = target.insert{name = item, count = math.min(count, have)}
+    if r > 0 then
+      inv.remove{name = item, count = r}
+      u.json_response({id = id, inserted = r, item = item, into = into, target = resolved})
+    else
+      -- Never a bare "Could not insert": the caller has to know WHICH building refused the item.
+      u.json_response({id = id, inserted = 0, item = item, into = into, target = resolved,
+        error = "Could not insert " .. item .. " into " .. entity_info.label(target) ..
+          " (full, or the item does not belong there)"})
+    end
   end)
 end)
 

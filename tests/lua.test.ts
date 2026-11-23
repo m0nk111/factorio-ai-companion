@@ -122,6 +122,24 @@ test("Lua: rotation targets the machine instead of a mod helper at the same posi
   assert(helper.direction==nil)
 `));
 
+test("Lua: world_observe takes a radius the game clamps instead of rejecting the request", () =>
+  run(`
+  script={active_mods={["ai-companion"]="test"}}
+  entity.surface.get_pollution=function() return 0 end
+  entity.surface.darkness=0
+  entity.force.get_spawn_position=function() return {x=0,y=0} end
+  entity.force.is_chunk_charted=function() return true end
+  local searched={}
+  entity.surface.find_entities_filtered=function(args) searched[#searched+1]=args.radius;return {} end
+  entity.surface.find_tiles_filtered=function(args) searched[#searched+1]=args.radius;return {} end
+  require("commands.observation")
+  local result;u.json_response=function(value) result=value end
+  u.handlers.world_observe{companionId=1,radius=5}
+  assert(result.radius==8, "the game must clamp the observation window to its 8-tile floor")
+  assert(searched[1]==8 and searched[2]==8, "both observation queries must use the clamped radius")
+  assert(result.entities_total==0)
+`));
+
 test("Lua: machine-only resources remain discoverable but cannot start a hand-mining job", () =>
   run(`
   prototypes.entity.oil={type="resource",mineable_properties={products={{name="crude-oil",type="fluid"}}}}
@@ -150,6 +168,93 @@ test("Lua: extraction preserves quality and uses the shared inventory groups", (
   local result;u.json_response=function(value) result=value end
   u.handlers.building_empty{companionId=1,x=1,y=0,itemName="iron-plate",count=3}
   assert(result.extracted==1 and remaining==3)
+`));
+
+// Target resolution: the caller's position names a TILE, and the building whose centre floors to
+// that tile is the one they asked about -- even though the cross-border neighbour below is closer
+// to the exact point. Today's nearest-only helper hands the items to that neighbour.
+test("Lua: fill targets the building on the requested tile, not a closer neighbour", () =>
+  run(`
+  require("commands.building")
+  local inserted={}
+  local function machine(name,pos)
+    return {valid=true,name=name,type="assembling-machine",position=pos,
+      prototype={items_to_place_this={{name=name,count=1}}},
+      insert=function(stack) inserted[#inserted+1]=name;return stack.count end}
+  end
+  local lab=machine("lab",{x=40.4,y=20.4})
+  local neighbour=machine("stone-furnace",{x=39.9,y=20.1})
+  entity.surface.find_entities_filtered=function() return {neighbour,lab} end
+  entity.position={x=37,y=20}
+  items["iron-plate"]=10
+  entity.get_inventory(defines.inventory.character_main).remove=function(stack)
+    items[stack.name]=items[stack.name]-stack.count;return stack.count end
+  local result;u.json_response=function(value) result=value end
+  u.handlers.building_fill{companionId=1,itemName="iron-plate",count=3,x=40,y=20}
+  assert(inserted[1]=="lab", "a closer neighbour must not take the items")
+  assert(result.inserted==3 and result.into=="lab" and items["iron-plate"]==7)
+  assert(result.target.name=="lab" and result.target.position.x==40.4 and result.target.position.y==20.4)
+`));
+
+test("Lua: empty targets the building on the requested tile, not a closer neighbour", () =>
+  run(`
+  require("commands.building")
+  defines.inventory.chest=1
+  local function chest(name,pos,count)
+    return {valid=true,name=name,type="container",position=pos,
+      prototype={items_to_place_this={{name=name,count=1}}},
+      get_inventory=function() return {valid=true,
+        get_contents=function() return {{name="iron-plate",count=count,quality="normal"}} end,
+        remove=function(stack) count=count-stack.count;return stack.count end,
+        insert=function(stack) count=count+stack.count;return stack.count end} end,
+      get_fuel_inventory=function() return nil end}
+  end
+  local lab=chest("wooden-chest",{x=40.4,y=20.4},4)
+  local neighbour=chest("steel-chest",{x=39.9,y=20.1},9)
+  entity.surface.find_entities_filtered=function() return {neighbour,lab} end
+  entity.position={x=37,y=20}
+  entity.insert=function(stack) return stack.count end
+  local result;u.json_response=function(value) result=value end
+  u.handlers.building_empty{companionId=1,itemName="iron-plate",count=3,x=40,y=20}
+  assert(result.extracted==3 and result.into=="wooden-chest")
+  assert(result.target.name=="wooden-chest" and result.target.position.x==40.4)
+`));
+
+test("Lua: info targets the building on the requested tile, not a closer neighbour", () =>
+  run(`
+  require("commands.building")
+  local function machine(name,pos)
+    return {valid=true,name=name,type="furnace",position=pos,force={name="player"},
+      status=defines.entity_status.working,prototype={items_to_place_this={{name=name,count=1}}},
+      get_fuel_inventory=function() return nil end,get_inventory=function() return nil end,
+      get_output_inventory=function() return nil end,get_recipe=function() return nil end}
+  end
+  local lab=machine("lab",{x=40.4,y=20.4})
+  local neighbour=machine("stone-furnace",{x=39.9,y=20.1})
+  entity.surface.find_entities_filtered=function() return {neighbour,lab} end
+  local result;u.json_response=function(value) result=value end
+  u.handlers.building_info{companionId=1,x=40,y=20}
+  assert(result.entity.name=="lab" and result.entity.position.x==40.4)
+`));
+
+test("Lua: a failed fill names the building it picked or reports its absence", () =>
+  run(`
+  require("commands.building")
+  -- Reached through the fallback: no building at (40,20) itself, one within the 3-tile radius.
+  local refused={valid=true,name="stone-furnace",type="furnace",position={x=40.4,y=20.4},
+    prototype={items_to_place_this={{name="stone-furnace",count=1}}},insert=function() return 0 end}
+  entity.surface.find_entities_filtered=function() return {refused} end
+  entity.position={x=37,y=20}
+  items["iron-plate"]=10
+  local result;u.json_response=function(value) result=value end
+  u.handlers.building_fill{companionId=1,itemName="iron-plate",count=5,x=40,y=20}
+  assert(result.error:find("Could not insert"), "the failure keeps its original meaning")
+  assert(result.error:find("stone%-furnace") and result.error:find("40.4"), result.error)
+  assert(result.inserted==0 and result.into=="stone-furnace" and result.target.position.y==20.4)
+  entity.surface.find_entities_filtered=function() return {} end
+  u.handlers.building_fill{companionId=1,itemName="iron-plate",count=5,x=60,y=-40}
+  assert(result.error:find("No building") and result.error:find("3 tiles"), result.error)
+  assert(result.inserted==0 and result.target==nil and result.into==nil)
 `));
 
 test("Lua: blueprint cancellation removes only its own remaining ghosts", () =>
