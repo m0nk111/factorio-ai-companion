@@ -57,6 +57,11 @@ function M.inventories(e)
     add("output", e.get_output_inventory())
   end
   if caps.inventory then add("inventory", e.get_inventory(defines.inventory[caps.inventory])) end
+  -- Ammunitie zit niet in de main/chest-inventaris: een turret heeft er geen, zijn
+  -- patronen staan in defines.inventory.turret_ammo (artillerie en voertuigen hebben
+  -- hun eigen variant). Zonder deze tak is geladen verdediging niet leesbaar en
+  -- meldt building_empty ten onrechte dat er niets in zit.
+  if caps.ammo then add("ammo", e.get_inventory(defines.inventory[caps.ammo])) end
   add("fuel", e.get_fuel_inventory())
   return result
 end
