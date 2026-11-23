@@ -102,9 +102,9 @@ test("Lua: hand crafting distinguishes locked recipes, machine categories and mi
   run(`
   entity.force.recipes.gear.enabled=false
   assert(queues.start_craft(1,"gear",1).error:find("locked"))
-  entity.force.recipes.gear.enabled=true; prototypes.recipe.gear.category="smelting"
+  entity.force.recipes.gear.enabled=true; prototypes.recipe.gear.categories={"smelting"}
   assert(queues.start_craft(1,"gear",1).error:find("not hand%-craftable"))
-  prototypes.recipe.gear.category="crafting";items.plate=0
+  prototypes.recipe.gear.categories={"crafting"};items.plate=0
   assert(queues.start_craft(1,"gear",1).error=="Missing ingredients")
   assert(not storage.craft_queues[1] and entity.crafting_queue_size==0)
 `));
@@ -521,7 +521,7 @@ test("Lua: task fuel selects the nearest burner and fails clearly without a targ
 test("Lua: procurement collects matching furnace output beyond an empty nearer machine", () =>
   run(`
   local procurement=require("commands.task_pool_ensure_item")
-  prototypes.recipe["iron-plate"]={category="smelting",ingredients={{name="iron-ore",amount=1}},products={{name="iron-plate",amount=1}}}
+  prototypes.recipe["iron-plate"]={categories={"smelting"},ingredients={{name="iron-ore",amount=1}},products={{name="iron-plate",amount=1}}}
   local counts={0,2}
   local function furnace(x,index)
     return {valid=true,position={x=x,y=0},get_recipe=function() return prototypes.recipe["iron-plate"] end,
@@ -754,6 +754,9 @@ test("Lua: overlay controls use validated commands and send a cancellation event
   for name,def in pairs(require("commands.contract")) do
     if def.execution=="game" and not u.handlers[name] then u.handlers[name]=function() u.json_response{} end end
   end
+  -- control.lua loads the dispatcher once every handler is registered; a click
+  -- is an event, so nothing may require it lazily from inside the handler.
+  require("commands.dispatch")
   u.handlers.companion_stop=function(args)
     calls[#calls+1]=args.companionId
     require("commands.lifecycle").stop(args.companionId)
