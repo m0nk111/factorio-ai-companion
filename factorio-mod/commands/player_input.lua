@@ -1,5 +1,11 @@
 local u = require("commands.init")
 local M = {}
+local dispatch
+
+-- Bind after control.lua registers every handler; require is forbidden during events.
+function M.bind_dispatcher(value)
+  dispatch = value
+end
 
 function M.send(player, text, cid)
   text = text:match("^%s*(.-)%s*$")
@@ -14,8 +20,17 @@ function M.send(player, text, cid)
   return message
 end
 
+-- A click is an event, so the dispatcher is bound by control.lua at parse time
+-- rather than required here; the loaded module is only a fallback so a missed
+-- binding degrades into an error reply instead of a crashed handler.
+local function dispatcher()
+  return dispatch or package.loaded["commands.dispatch"]
+end
+
 function M.control(player, tool, args)
-  local result = require("commands.dispatch").call(tool, args, player)
+  local resolved = dispatcher()
+  if not resolved then return {error = "dispatch not loaded yet"} end
+  local result = resolved.call(tool, args, player)
   if not result.error then
     storage.companion_messages[#storage.companion_messages+1] = {
       player=player.name,tick=game.tick,target_companion=args.companionId,control={tool=tool,args=args}}

@@ -3,7 +3,7 @@ defines = {direction={north=0,northeast=2,east=4,southeast=6,south=8,southwest=1
 math.atan2 = math.atan
 storage = {companions={}, walking_queues={}, tasks={}, reserved={}, active_step={}, path_requests={}, errors={}}
 game = {tick=0, print=function() end, forces={}, surfaces={},players={},connected_players={}}
-prototypes = {recipe={gear={energy=0.5,category="crafting",ingredients={}}}, entity={
+prototypes = {recipe={gear={energy=0.5,categories={"crafting"},ingredients={}}}, entity={
   ore={type="resource",mineable_properties={products={{type="item",name="ore"}}}}
 }}
 items = {plate=20}
