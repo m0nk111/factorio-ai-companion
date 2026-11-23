@@ -6,6 +6,52 @@ game = {tick=0, print=function() end, forces={}, surfaces={},players={},connecte
 prototypes = {recipe={gear={energy=0.5,categories={"crafting"},ingredients={}}}, entity={
   ore={type="resource",mineable_properties={products={{type="item",name="ore"}}}}
 }}
+-- Factoriopedia shape: Factorio 2.x exposes per-type statistics through get_*
+-- accessors and raises on a key the prototype does not have, so a fixture that
+-- only carries plain fields would hide exactly the bugs a lookup can hit.
+-- A recipe that consumes the gear, so the reverse lookup is exercised in the
+-- direction a companion asks most: "what do I need this for".
+prototypes.recipe["automation-science-pack"] = {
+  name="automation-science-pack", energy=5, categories={"crafting"},
+  ingredients={{name="copper-plate", amount=1}, {name="iron-gear-wheel", amount=1}},
+  products={{name="automation-science-pack", amount=1}}
+}
+prototypes.recipe["iron-gear-wheel"] = {
+  name="iron-gear-wheel", energy=0.5, categories={"crafting"},
+  ingredients={{name="iron-plate", amount=2}}, products={{name="iron-gear-wheel", amount=1}},
+  localised_name={"recipe-name.iron-gear-wheel"}, hidden=false, allow_productivity=true
+}
+prototypes.item = {
+  ["iron-gear-wheel"] = {
+    name="iron-gear-wheel", type="item", stack_size=100, weight=1000,
+    localised_name={"item-name.iron-gear-wheel"},
+    localised_description={"item-description.iron-gear-wheel"},
+    subgroup={name="intermediate-product"}
+  },
+  ["assembling-machine-1"] = {
+    name="assembling-machine-1", type="item", stack_size=50,
+    place_result="assembling-machine-1"
+  }
+}
+prototypes.entity["assembling-machine-1"] = {
+  name="assembling-machine-1", type="assembling-machine",
+  tile_width=3, tile_height=3, module_inventory_size=0, energy_usage=1250,
+  get_max_health=function() return 300 end,
+  get_crafting_speed=function() return 0.5 end
+}
+prototypes.fluid = {water={name="water", default_temperature=15, max_temperature=100}}
+prototypes.technology = {logistics={
+  name="logistics",
+  prerequisites={{name="automation"}},
+  effects={{type="unlock-recipe", recipe="fast-inserter"}}
+}}
+-- The research unit is per-force in Factorio 2.x, not on the prototype.
+game.forces.player = game.forces.player or {technologies={}}
+game.forces.player.technologies = {logistics={
+  research_unit_count=20, research_unit_energy=600,
+  research_unit_ingredients={{name="automation-science-pack", amount=1}},
+  researched=false, enabled=true, level=1
+}}
 items = {plate=20}
 local inventory = {valid=true}
 inventory.get_item_count = function(name)

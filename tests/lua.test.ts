@@ -827,3 +827,114 @@ test("Lua: help is callable with no arguments and filters on a name prefix", () 
   local none = u.capture_response(function() u.handlers.help({category="no-such-prefix"}) end)
   assert(none.count == 0)
 `));
+
+test("Lua: prototype_info answers what the factoriopedia answers", () =>
+  run(`
+  local u = require("commands.init")
+  require("commands.prototype_info")
+
+  -- An item: what it is, and which recipes make it and use it. The reverse
+  -- lookup is the question a companion actually asks ("where does this come from").
+  local item = u.capture_response(function()
+    u.handlers.prototype_info({name="iron-gear-wheel"})
+  end)
+  assert(item.found, "an existing prototype must be found")
+  assert(item.kind == "item", "item is searched before recipe: " .. tostring(item.kind))
+  assert(item.stack_size == 100, "stack size must come from the item prototype")
+  assert(item.subgroup == "intermediate-product")
+  assert(item.localised_name == "item-name.iron-gear-wheel", item.localised_name)
+  assert(#item.recipes_producing >= 1, "the recipe that makes it must be listed")
+  assert(item.recipes_producing[1] == "iron-gear-wheel", item.recipes_producing[1])
+  assert(item.recipes_producing_total == #item.recipes_producing)
+
+  -- The same name in another table: crafting time and ingredients.
+  local recipe = u.capture_response(function()
+    u.handlers.prototype_info({name="iron-gear-wheel", kind="recipe"})
+  end)
+  assert(recipe.found and recipe.kind == "recipe")
+  assert(recipe.crafting_time == 0.5, "crafting time is the recipe energy")
+  assert(recipe.category == "crafting")
+  assert(recipe.ingredients[1].name == "iron-plate" and recipe.ingredients[1].amount == 2)
+  assert(recipe.products[1].name == "iron-gear-wheel")
+
+  -- The other direction: what consumes it.
+  assert(#item.recipes_using >= 1, "recipes that consume it must be listed")
+  assert(item.recipes_using[1] == "automation-science-pack", item.recipes_using[1])
+
+  local missing = u.capture_response(function()
+    u.handlers.prototype_info({name="no-such-thing"})
+  end)
+  assert(missing.found == false)
+  assert(#missing.searched == 5, "a miss must say which tables were searched")
+`));
+
+test("Lua: prototype_info reads building statistics through the 2.x accessors", () =>
+  run(`
+  local u = require("commands.init")
+  require("commands.prototype_info")
+
+  -- In Factorio 2.x max_health and crafting_speed are get_* methods on the
+  -- prototype, and reading them as fields raises. A plain field read here would
+  -- take the whole answer down.
+  local entity = u.capture_response(function()
+    u.handlers.prototype_info({name="assembling-machine-1", kind="entity"})
+  end)
+  assert(entity.found and entity.kind == "entity")
+  assert(entity.max_health == 300, tostring(entity.max_health))
+  assert(entity.crafting_speed == 0.5, tostring(entity.crafting_speed))
+  assert(entity.tile_width == 3 and entity.tile_height == 3)
+  assert(entity.module_slots == 0)
+  assert(entity.energy_usage == 1250)
+
+  -- The technology table, including what it unlocks.
+  local tech = u.capture_response(function()
+    u.handlers.prototype_info({name="logistics", kind="technology"})
+  end)
+  assert(tech.found and tech.kind == "technology")
+  assert(tech.research_unit_count == 20, tostring(tech.research_unit_count))
+  assert(tech.research_unit_energy == 600)
+  assert(tech.research_unit_seconds == 10, "energy is ticks; a second is 60")
+  assert(tech.research_unit_ingredients[1].name == "automation-science-pack")
+  assert(tech.prerequisites[1] == "automation")
+  assert(tech.effects[1].recipe == "fast-inserter")
+
+  -- A fluid carries temperatures and the same reverse lookups.
+  local fluid = u.capture_response(function()
+    u.handlers.prototype_info({name="water"})
+  end)
+  assert(fluid.found and fluid.kind == "fluid")
+  assert(fluid.default_temperature == 15)
+
+  -- An unknown kind is refused instead of silently searching everything.
+  local bad = u.capture_response(function()
+    u.handlers.prototype_info({name="water", kind="nonsense"})
+  end)
+  assert(bad.error and bad.error:find("unknown kind"), tostring(bad.error))
+`));
+
+test("Lua: prototype_info puts the real recipe first and keeps recycling counted", () =>
+  run(`
+  local u = require("commands.init")
+  require("commands.prototype_info")
+
+  -- Space Age has a recycling recipe for nearly everything; without separation
+  -- "what makes an iron gear wheel" is answered with forty-seven grinders.
+  prototypes.recipe["iron-gear-wheel-recycling"] = {
+    name="iron-gear-wheel-recycling", energy=0.5, categories={"recycling"},
+    ingredients={{name="iron-gear-wheel", amount=1}},
+    products={{name="iron-plate", amount=1}}
+  }
+
+  local item = u.capture_response(function()
+    u.handlers.prototype_info({name="iron-gear-wheel"})
+  end)
+  assert(item.recipes_using[1] == "automation-science-pack",
+    "the real consumer comes first: " .. tostring(item.recipes_using[1]))
+  -- The totals count their own bucket: the real consumer, and the grinder apart.
+  assert(item.recipes_using_total == 1, tostring(item.recipes_using_total))
+  assert(item.recipes_using_recycling_total == 1, tostring(item.recipes_using_recycling_total))
+
+  -- The recipe that produces it is never a recycling recipe.
+  assert(item.recipes_producing[1] == "iron-gear-wheel", item.recipes_producing[1])
+  prototypes.recipe["iron-gear-wheel-recycling"] = nil
+`));

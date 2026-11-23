@@ -2613,5 +2613,36 @@
       ],
       "additionalProperties": false
     }
+  },
+  "prototype_info": {
+    "description": "Look up a prototype the way the in-game factoriopedia does: description, recipes that make or use it, crafting time, stack size and building statistics",
+    "execution": "game",
+    "effect": "read",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Prototype name, e.g. iron-gear-wheel, electronic-circuit, assembling-machine-1"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "item",
+            "recipe",
+            "entity",
+            "fluid",
+            "technology"
+          ],
+          "description": "Which prototype table to look in. Omit to search item, recipe, entity, fluid and technology in that order."
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    }
   }
 }
