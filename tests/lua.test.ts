@@ -125,6 +125,7 @@ test("Lua: rotation targets the machine instead of a mod helper at the same posi
 test("Lua: world_observe takes a radius the game clamps instead of rejecting the request", () =>
   run(`
   script={active_mods={["ai-companion"]="test"}}
+  commands={add_command=function() end}
   entity.surface.get_pollution=function() return 0 end
   entity.surface.darkness=0
   entity.force.get_spawn_position=function() return {x=0,y=0} end
@@ -133,8 +134,13 @@ test("Lua: world_observe takes a radius the game clamps instead of rejecting the
   entity.surface.find_entities_filtered=function(args) searched[#searched+1]=args.radius;return {} end
   entity.surface.find_tiles_filtered=function(args) searched[#searched+1]=args.radius;return {} end
   require("commands.observation")
-  local result;u.json_response=function(value) result=value end
-  u.handlers.world_observe{companionId=1,radius=5}
+  -- The in-game dispatcher validates against the regenerated contract, so a radius of 5 has to
+  -- pass the SAME schema the MCP tool uses. Every other handler is stubbed.
+  for name,def in pairs(require("commands.contract")) do
+    if def.execution=="game" and not u.handlers[name] then u.handlers[name]=function() u.json_response{} end end
+  end
+  local result=require("commands.dispatch").call("world_observe",{companionId=1,radius=5})
+  assert(result.error==nil, result.error)
   assert(result.radius==8, "the game must clamp the observation window to its 8-tile floor")
   assert(searched[1]==8 and searched[2]==8, "both observation queries must use the clamped radius")
   assert(result.entities_total==0)
