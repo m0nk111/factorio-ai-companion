@@ -246,20 +246,28 @@ test("Lua: info targets the building on the requested tile, not a closer neighbo
 test("Lua: a failed fill names the building it picked or reports its absence", () =>
   run(`
   require("commands.building")
-  -- Reached through the fallback: no building at (40,20) itself, one within the 3-tile radius.
-  local refused={valid=true,name="stone-furnace",type="furnace",position={x=40.4,y=20.4},
-    prototype={items_to_place_this={{name="stone-furnace",count=1}}},insert=function() return 0 end}
-  entity.surface.find_entities_filtered=function() return {refused} end
   entity.position={x=37,y=20}
   items["iron-plate"]=10
   local result;u.json_response=function(value) result=value end
+  -- The fallback branch: the furnace is on another tile (floor 42,20) 2.4 tiles from the request,
+  -- so it is picked by distance rather than by tile.
+  local refused={valid=true,name="stone-furnace",type="furnace",position={x=42.4,y=20.4},
+    prototype={items_to_place_this={{name="stone-furnace",count=1}}},insert=function() return 0 end}
+  entity.surface.find_entities_filtered=function() return {refused} end
   u.handlers.building_fill{companionId=1,itemName="iron-plate",count=5,x=40,y=20}
   assert(result.error:find("Could not insert"), "the failure keeps its original meaning")
-  assert(result.error:find("stone%-furnace") and result.error:find("40.4"), result.error)
+  assert(result.error:find("stone%-furnace") and result.error:find("42.4"), result.error)
   assert(result.inserted==0 and result.into=="stone-furnace" and result.target.position.y==20.4)
+  -- 3.6 tiles away is outside the 3-tile search radius, so the fallback must not reach it.
+  local outside={valid=true,name="steel-furnace",type="furnace",position={x=43.6,y=20.4},
+    prototype={items_to_place_this={{name="steel-furnace",count=1}}},insert=function() return 0 end}
+  entity.surface.find_entities_filtered=function() return {outside} end
+  u.handlers.building_fill{companionId=1,itemName="iron-plate",count=5,x=40,y=20}
+  assert(result.error:find("No building") and result.error:find("3 tiles"), result.error)
+  assert(result.inserted==0 and result.target==nil and result.into==nil)
   entity.surface.find_entities_filtered=function() return {} end
   u.handlers.building_fill{companionId=1,itemName="iron-plate",count=5,x=60,y=-40}
-  assert(result.error:find("No building") and result.error:find("3 tiles"), result.error)
+  assert(result.error:find("No building"), result.error)
   assert(result.inserted==0 and result.target==nil and result.into==nil)
 `));
 
