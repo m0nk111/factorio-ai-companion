@@ -53,3 +53,20 @@ test("environment configuration rejects invalid values and uses one set of defau
   expect(() => readSettings({ COMPANION_PORT: "NaN" })).toThrow();
   expect(() => readSettings({ MAX_TOOL_CALLS: "0" })).toThrow();
 });
+
+test("every command's required fields are also declared properties", () => {
+  // help shipped with properties:{}, required:["category"], additionalProperties:false —
+  // a schema no caller could ever satisfy. Catch that shape for every command.
+  const problems: string[] = [];
+  for (const [name, definition] of Object.entries(COMMANDS as Record<string, any>)) {
+    const schema = definition?.inputSchema;
+    if (!schema || schema.type !== "object") continue;
+    const properties = schema.properties ?? {};
+    for (const field of schema.required ?? [])
+      if (!(field in properties)) problems.push(`${name}: required '${field}' is not a property`);
+    if (schema.additionalProperties === false)
+      for (const field of schema.required ?? [])
+        if (!(field in properties)) problems.push(`${name}: required '${field}' is rejected as additional`);
+  }
+  expect(problems).toEqual([]);
+});

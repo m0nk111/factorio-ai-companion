@@ -804,3 +804,26 @@ test("Lua: a turret's ammunition is readable through the shared inventory walk",
   assert(described.ammo and described.ammo[1].name=="firearm-magazine" and described.ammo[1].count==2)
   assert(described.status=="working")
 `));
+
+test("Lua: help is callable with no arguments and filters on a name prefix", () =>
+  run(`
+  script = {active_mods = {["ai-companion"] = "0.18.3", base = "2.1.23"}}
+  local u = require("commands.init")
+  require("commands.help")   -- control.lua requires the modules; the harness does not
+
+  -- The schema used to require a field it also declared as additional, so no call
+  -- could ever succeed and a caller could not discover the real tool names.
+  local all = u.capture_response(function() u.handlers.help({}) end)
+  assert(all.count and all.count > 10, "every game tool must be listed")
+  assert(not all.error)
+
+  local building = u.capture_response(function() u.handlers.help({category="building"}) end)
+  assert(building.category == "building")
+  assert(building.count > 0 and building.count < all.count)
+  for _, tool in ipairs(building.tools) do
+    assert(tool.name:sub(1, 9) == "building_", "unexpected tool for the filter: " .. tool.name)
+  end
+
+  local none = u.capture_response(function() u.handlers.help({category="no-such-prefix"}) end)
+  assert(none.count == 0)
+`));

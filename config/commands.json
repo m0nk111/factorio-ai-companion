@@ -1455,15 +1455,20 @@
     }
   },
   "help": {
-    "description": "Get help and list of commands",
+    "description": "List the game tools this mod exposes, optionally filtered by name prefix (category).",
     "execution": "game",
     "effect": "read",
     "inputSchema": {
       "type": "object",
-      "properties": {},
-      "required": [
-        "category"
-      ],
+      "properties": {
+        "category": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40,
+          "description": "Optional tool-name prefix to filter on, e.g. building, world, companion, item, task. Omit for every tool."
+        }
+      },
+      "required": [],
       "additionalProperties": false
     }
   },
