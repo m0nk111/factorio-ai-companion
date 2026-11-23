@@ -1862,7 +1862,8 @@
                   "dir": {
                     "type": "integer",
                     "minimum": 0,
-                    "maximum": 3
+                    "maximum": 15,
+                    "description": "Direction: 16-way Factorio 2.x values (0=north, 4=east, 8=south, 12=west, diagonals in between) or 0-3 cardinals (0=north, 1=east, 2=south, 3=west). Values above 3 are normalized to the nearest cardinal by integer division: 4-7=east, 8-11=south, 12-15=west."
                   },
                   "candidates": {
                     "type": "array",
@@ -1884,7 +1885,8 @@
                         "dir": {
                           "type": "integer",
                           "minimum": 0,
-                          "maximum": 3
+                          "maximum": 15,
+                          "description": "Direction: 16-way Factorio 2.x values (0=north, 4=east, 8=south, 12=west, diagonals in between) or 0-3 cardinals (0=north, 1=east, 2=south, 3=west). Values above 3 are normalized to the nearest cardinal by integer division: 4-7=east, 8-11=south, 12-15=west."
                         }
                       },
                       "required": [
