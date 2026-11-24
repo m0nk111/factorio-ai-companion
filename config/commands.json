@@ -2644,5 +2644,49 @@
       ],
       "additionalProperties": false
     }
+  },
+  "research_switch": {
+    "description": "Make a technology the active research, the way clicking it in the research screen does. The previous research stays in the queue.",
+    "execution": "game",
+    "effect": "act",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "companionId": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "technology": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "companionId",
+        "technology"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "research_cancel": {
+    "description": "Cancel the active research without choosing a replacement; the queue decides what runs next.",
+    "execution": "game",
+    "effect": "act",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "companionId": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        }
+      },
+      "required": [
+        "companionId"
+      ],
+      "additionalProperties": false
+    }
   }
 }

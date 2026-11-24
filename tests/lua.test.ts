@@ -969,3 +969,87 @@ test("Lua: building_info says when the answer is a neighbour, not the tile asked
     {x=10.5, y=-10.5}, 2)
   assert(none == nil, "an empty area resolves to nothing rather than to a neighbour")
 `));
+
+test("Lua: research_set tells a queued technology apart from a rejected one", () =>
+  run(`
+  local u = require("commands.init")
+  require("commands.research")
+
+  -- add_research returns false both for "already queued" and for a real refusal.
+  -- Reporting both as "Failed" told a caller its request had been rejected while
+  -- the technology was already on its way.
+  local queued_tech = {name="gun-turret", researched=false, enabled=true, prerequisites={}}
+  local force = {
+    technologies = {["gun-turret"] = queued_tech, concrete = {name="concrete", researched=false, enabled=true, prerequisites={}}},
+    research_queue = {queued_tech},
+    current_research = {name="concrete"},
+    research_progress = 0.43,
+    add_research = function(name) return false end,
+  }
+  _G.game = {players = {}, forces = {player = force}}
+  local companion = {entity = {force = force, valid = true}}
+  local function with_companion(fn)
+    local original = u.find_companion
+    u.find_companion = function() return 1, companion end
+    local result = u.capture_response(fn)
+    u.find_companion = original
+    return result
+  end
+
+  local queued = with_companion(function() u.handlers.research_set({companionId=1, technology="gun-turret"}) end)
+  assert(queued.queued == true and queued.already_queued == true, "already queued is not a failure")
+  assert(queued.position == 1, tostring(queued.position))
+  assert(queued.error == nil, "no error when the technology is already queued")
+
+  local current = with_companion(function() u.handlers.research_set({companionId=1, technology="concrete"}) end)
+  assert(current.already_current == true, "the technology already being researched is not a failure")
+
+  -- A genuine refusal still says so, and says why instead of the word "Failed".
+  force.research_queue = {}
+  local refused = with_companion(function() u.handlers.research_set({companionId=1, technology="gun-turret"}) end)
+  assert(refused.error and refused.error:find("queue is disabled or full"), tostring(refused.error))
+`));
+
+test("Lua: research_switch promotes a technology the way the research screen does", () =>
+  run(`
+  local u = require("commands.init")
+  require("commands.research")
+
+  local logistics = {name="logistics-2", researched=false, enabled=true, prerequisites={}}
+  local concrete = {name="concrete", researched=false, enabled=true, prerequisites={}}
+  local locked = {name="laser-turret", researched=false, enabled=true, prerequisites={{name="laser", researched=false}}}
+  local force = {
+    technologies = {["logistics-2"]=logistics, concrete=concrete, ["laser-turret"]=locked,
+      laser={name="laser", researched=false}},
+    research_queue = {concrete},
+    current_research = concrete,
+    research_progress = 0.1,
+  }
+  -- Factorio's accessor is bound: called as a method, implemented as a closure. It
+  -- has to be attached after the table exists, or the name resolves to a global.
+  force.cancel_current_research = function() force.current_research = nil end
+  _G.game = {players = {}, forces = {player = force}}
+  local companion = {entity = {force = force, valid = true}}
+  local function with_companion(fn)
+    local original = u.find_companion
+    u.find_companion = function() return 1, companion end
+    local result = u.capture_response(fn)
+    u.find_companion = original
+    return result
+  end
+
+  local switched = with_companion(function() u.handlers.research_switch({companionId=1, technology="logistics-2"}) end)
+  assert(switched.error == nil, "onverwachte fout: " .. tostring(switched.error))
+  -- current_research is read only in 2.x, so promotion means reordering the queue:
+  -- the head is the active technology and everything else stays behind it.
+  assert(switched.queue[1] == "logistics-2", "kop van de queue: " .. tostring(switched.queue[1]))
+  assert(switched.queue[2] == "concrete", "de rest blijft staan: " .. tostring(switched.queue[2]))
+  assert(switched.previous == "concrete", "vorige: " .. tostring(switched.previous))
+
+  force.current_research = concrete
+  local blocked = with_companion(function() u.handlers.research_switch({companionId=1, technology="laser-turret"}) end)
+  assert(blocked.error and blocked.error:find("Missing"), tostring(blocked.error))
+
+  local cancelled = with_companion(function() u.handlers.research_cancel({companionId=1}) end)
+  assert(cancelled.cancelled == "concrete", tostring(cancelled.cancelled))
+`));
