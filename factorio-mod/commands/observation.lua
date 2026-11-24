@@ -42,8 +42,8 @@ end
 
 u.register("world_observe", function(args)
   u.safe_command(function()
-    local cid, radius = tonumber(args.companionId) or 0, tonumber(args.radius) or 48
-    radius = math.min(96, math.max(8, radius))
+    local cid, radius = tonumber(args.companionId) or 0, tonumber(args.radius) or 96
+    radius = math.min(192, math.max(8, radius))
     local companion = cid > 0 and u.get_companion(cid) or nil
     if cid > 0 and not companion then u.not_found(cid); return end
     local player = game.connected_players[1] or game.players[1]

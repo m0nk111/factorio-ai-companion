@@ -6,7 +6,7 @@ u.register("world_enemies", function(args)
   u.safe_command(function()
     local id, c = u.find_companion(args.companionId)
     if not id then u.not_found(); return end
-    local radius = tonumber(args.radius) or 30
+    local radius = tonumber(args.radius) or 40
 
     local enemies = c.entity.surface.find_entities_filtered{
       position = c.entity.position,

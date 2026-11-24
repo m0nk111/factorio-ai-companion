@@ -144,6 +144,14 @@ test("Lua: world_observe takes a radius the game clamps instead of rejecting the
   assert(result.radius==8, "the game must clamp the observation window to its 8-tile floor")
   assert(searched[1]==8 and searched[2]==8, "both observation queries must use the clamped radius")
   assert(result.entities_total==0)
+
+  -- The upper bound doubled with the defaults: 192 is honoured, anything above is clamped.
+  local big=require("commands.dispatch").call("world_observe",{companionId=1,radius=192})
+  assert(big.radius==192, "192 moet ongewijzigd doorkomen: " .. tostring(big.radius))
+  assert(big.limits.vision_radius==64, "zicht is verdubbeld naar 64: " .. tostring(big.limits.vision_radius))
+  -- Boven 192 beslist het schema, niet de Lua-klem: dat verzoek hoort geweigerd te worden.
+  local over=require("commands.dispatch").call("world_observe",{companionId=1,radius=400})
+  assert(over.radius==nil and over.error~=nil, "400 hoort door het schema geweigerd te worden")
 `));
 
 test("Lua: machine-only resources remain discoverable but cannot start a hand-mining job", () =>
