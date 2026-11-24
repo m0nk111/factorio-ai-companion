@@ -777,3 +777,30 @@ test("Lua: overlay controls use validated commands and send a cancellation event
   assert(panel().create.fac_name.text=="")
 `,
   ));
+
+test("Lua: a turret's ammunition is readable through the shared inventory walk", () =>
+  run(`
+  local info = require("commands.entity_info")
+  local mags = 2
+  local ammo = {valid=true}
+  ammo.get_item_count = function(a) return mags end
+  ammo.get_contents = function() return {{name="firearm-magazine",count=mags,quality="normal"}} end
+  local turret = {valid=true, name="gun-turret", type="ammo-turret",
+    position={x=3,y=53}, direction=0, health=400, max_health=400, status=1,
+    energy=0, force={name="player"},
+    get_inventory=function(index) return index==defines.inventory.turret_ammo and ammo or nil end,
+    get_main_inventory=function() return nil end,
+    get_fuel_inventory=function() return nil end,
+    get_output_inventory=function() return nil end}
+
+  -- building_empty walks exactly this list, so the ammo inventory has to be in it.
+  local groups = info.inventories(turret)
+  local found
+  for _, group in ipairs(groups) do if group.slot=="ammo" then found=group end end
+  assert(found and found.inventory==ammo, "the turret ammo inventory must be part of the walk")
+
+  -- building_info and world_observe share describe(), so the count shows up there too.
+  local described = info.describe(turret, true)
+  assert(described.ammo and described.ammo[1].name=="firearm-magazine" and described.ammo[1].count==2)
+  assert(described.status=="working")
+`));
