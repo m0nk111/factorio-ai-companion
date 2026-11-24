@@ -938,3 +938,34 @@ test("Lua: prototype_info puts the real recipe first and keeps recycling counted
   assert(item.recipes_producing[1] == "iron-gear-wheel", item.recipes_producing[1])
   prototypes.recipe["iron-gear-wheel-recycling"] = nil
 `));
+
+test("Lua: building_info says when the answer is a neighbour, not the tile asked about", () =>
+  run(`
+  local entity_info = require("commands.entity_info")
+
+  -- A caller that asks about one tile and silently receives the adjacent machine
+  -- reads that machine's recipe and status as if they were the tile's. The
+  -- returned position was already honest; the payload now says it too.
+  local function surface_with(offset)
+    return {find_entities_filtered = function(filter)
+      local e = {valid=true, type="assembling-machine", name="assembling-machine-1",
+        position={x=filter.position.x + offset, y=filter.position.y}, direction=0,
+        force={name="player"}, health=300, max_health=300, status=1, unit_number=1,
+        prototype={items_to_place_this={{name="assembling-machine-1"}}},
+        get_recipe=function() return {name="iron-gear-wheel"} end,
+        get_inventory=function() return nil end}
+      return {e}
+    end}
+  end
+
+  local neighbour, on_tile = entity_info.resolve_on_tile(surface_with(1), {x=10.5, y=-10.5}, 2)
+  assert(neighbour, "a neighbour within the radius must still resolve")
+  assert(on_tile == false, "a building on the next tile is not on the requested tile")
+
+  local centred, centred_on_tile = entity_info.resolve_on_tile(surface_with(0), {x=10.5, y=-10.5}, 2)
+  assert(centred and centred_on_tile == true, "a building centred on the tile is on it")
+
+  local none = entity_info.resolve_on_tile({find_entities_filtered = function(filter) return {} end},
+    {x=10.5, y=-10.5}, 2)
+  assert(none == nil, "an empty area resolves to nothing rather than to a neighbour")
+`));

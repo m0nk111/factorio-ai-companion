@@ -127,12 +127,20 @@ u.register("building_info", function(args)
     local x, y = tonumber(args.x), tonumber(args.y)
     if not x or not y then u.error_response("Invalid coordinates"); return end
     local pos, radius = {x=x,y=y}, 2
-    local t = entity_info.resolve(c.entity.surface,pos,radius)
+    local t, on_tile = entity_info.resolve_on_tile(c.entity.surface,pos,radius)
     if not t then
       u.json_response({id = id, error = "No building at " .. entity_info.point(pos) ..
         " or within " .. radius .. " tiles (search radius)"}); return
     end
-    u.json_response({id = id, entity = entity_info.describe(t, true)})
+    local payload = entity_info.describe(t, true)
+    -- The entity returned may be a neighbour within the search radius. Say so, and
+    -- say how far away: the answer describes that entity, never the empty tile.
+    payload.on_requested_tile = on_tile
+    if not on_tile then
+      payload.nearest = true
+      payload.distance = math.sqrt((t.position.x - x) ^ 2 + (t.position.y - y) ^ 2)
+    end
+    u.json_response({id = id, entity = payload})
   end)
 end)
 

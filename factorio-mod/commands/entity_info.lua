@@ -20,6 +20,20 @@ end
 -- any centre whose floor() matches the requested tile IS the building that was asked about. Such a
 -- building wins over a neighbour that merely happens to be closer, and only an empty tile falls
 -- back to the closest building within `radius` -- the search radius around the requested position.
+-- Same resolution, but also says whether the answer is the building on the
+-- requested tile or a neighbour that happened to be within the radius. Commands
+-- that report state must pass that on: a caller who asked about one tile and got
+-- a different entity's inventory reads the answer as if it were the tile's.
+function M.resolve_on_tile(surface, pos, radius, accept)
+  local resolved = M.resolve(surface, pos, radius, accept)
+  if not resolved then
+    return nil, false
+  end
+  local tx, ty = math.floor(pos.x), math.floor(pos.y)
+  local on_tile = math.floor(resolved.position.x) == tx and math.floor(resolved.position.y) == ty
+  return resolved, on_tile
+end
+
 function M.resolve(surface, pos, radius, accept)
   local tx, ty = math.floor(pos.x), math.floor(pos.y)
   -- Query wide enough to see the whole requested tile even when `radius` is small (rotate: 1).
