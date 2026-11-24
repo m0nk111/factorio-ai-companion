@@ -93,6 +93,9 @@ local function ingredient_list(list)
   return out
 end
 
+-- A product either has a fixed amount or a range (amount_min..amount_max), and
+-- a probability below 1 for by-products. Reporting only `amount` answered "how
+-- much does this make" with nothing for every ranged product.
 local function amount_list(list)
   local out = {}
   if type(list) ~= "table" then
@@ -104,6 +107,8 @@ local function amount_list(list)
       out[#out + 1] = {
         name = name,
         amount = read(entry, "amount"),
+        amount_min = read(entry, "amount_min"),
+        amount_max = read(entry, "amount_max"),
         probability = read(entry, "probability"),
         type = read(entry, "type"),
       }
@@ -123,7 +128,11 @@ local function is_recycling(name)
   return name:find("%-recycling$") ~= nil
 end
 
-local function recipes_touching(name, want_products)
+-- `kind` is the prototype table the caller asked about ("item" or "fluid"), and
+-- it has to be part of the match: a mod may define an item and a fluid under the
+-- same name, and a bare name comparison mixes their recipes even when the caller
+-- said which one it meant. An entry without a type is an item.
+local function recipes_touching(name, want_products, kind)
   local real, recycling = {}, {}
   local real_total, recycling_total = 0, 0
   for _, recipe in pairs(prototypes.recipe) do
@@ -131,7 +140,7 @@ local function recipes_touching(name, want_products)
     local entries = want_products and read(recipe, "products") or read(recipe, "ingredients")
     if type(entries) == "table" then
       for _, entry in ipairs(entries) do
-        if read(entry, "name") == name then
+        if read(entry, "name") == name and (read(entry, "type") or "item") == kind then
           hit = true
           break
         end
@@ -172,10 +181,10 @@ local function item_detail(prototype)
   detail.subgroup = subgroup and read(subgroup, "name") or nil
   detail.place_result = read(prototype, "place_result")
 
-  local produced, produced_total, produced_recycling = recipes_touching(prototype.name, true)
+  local produced, produced_total, produced_recycling = recipes_touching(prototype.name, true, "item")
   detail.recipes_producing, detail.recipes_producing_total = produced, produced_total
   detail.recipes_producing_recycling_total = produced_recycling > 0 and produced_recycling or nil
-  local used, used_total, used_recycling = recipes_touching(prototype.name, false)
+  local used, used_total, used_recycling = recipes_touching(prototype.name, false, "item")
   detail.recipes_using, detail.recipes_using_total = used, used_total
   detail.recipes_using_recycling_total = used_recycling > 0 and used_recycling or nil
   return detail
@@ -230,10 +239,10 @@ local function fluid_detail(prototype)
   detail.max_temperature = read(prototype, "max_temperature")
   detail.fuel_value = read(prototype, "fuel_value")
 
-  local produced, produced_total, produced_recycling = recipes_touching(prototype.name, true)
+  local produced, produced_total, produced_recycling = recipes_touching(prototype.name, true, "fluid")
   detail.recipes_producing, detail.recipes_producing_total = produced, produced_total
   detail.recipes_producing_recycling_total = produced_recycling > 0 and produced_recycling or nil
-  local used, used_total, used_recycling = recipes_touching(prototype.name, false)
+  local used, used_total, used_recycling = recipes_touching(prototype.name, false, "fluid")
   detail.recipes_using, detail.recipes_using_total = used, used_total
   detail.recipes_using_recycling_total = used_recycling > 0 and used_recycling or nil
   return detail
@@ -275,11 +284,32 @@ local function technology_detail(prototype)
   table.sort(prerequisites)
   detail.prerequisites = prerequisites
 
+  -- An effect is not always a recipe unlock. "ammo-damage" carries the category,
+  -- the modifier and its maximum; "inserter-capacity-bonus" only the modifier.
+  -- Copying type and recipe alone answered "what does this research give me"
+  -- with the type and nothing else, so every scalar field is kept and a
+  -- prototype-valued field is reduced to its name.
   local effects = {}
   local effect_list = read(prototype, "effects")
   if type(effect_list) == "table" then
     for _, entry in pairs(effect_list) do
-      effects[#effects + 1] = {type = read(entry, "type"), recipe = read(entry, "recipe")}
+      local effect = {type = read(entry, "type")}
+      for key in pairs(entry) do
+        if key ~= "type" then
+          local value = read(entry, key)
+          local kind = type(value)
+          if kind == "number" or kind == "string" or kind == "boolean" then
+            effect[key] = value
+          elseif kind == "userdata" then
+            effect[key] = value.name
+          elseif kind == "table" and value.name then
+            -- Test fixtures model a prototype as a table; the game hands over
+            -- userdata. Both reduce to the name.
+            effect[key] = value.name
+          end
+        end
+      end
+      effects[#effects + 1] = effect
     end
   end
   detail.effects = effects

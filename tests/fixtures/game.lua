@@ -36,15 +36,52 @@ prototypes.item = {
 prototypes.entity["assembling-machine-1"] = {
   name="assembling-machine-1", type="assembling-machine",
   tile_width=3, tile_height=3, module_inventory_size=0, energy_usage=1250,
-  get_max_health=function() return 300 end,
-  get_crafting_speed=function() return 0.5 end
+  -- Bound accessors: real Factorio treats a supplied argument as an optional
+  -- quality prototype and raises "Invalid QualityID" for anything else, so the
+  -- fixture raises too. Without this a regression from `obj[method]()` to
+  -- `obj[method](obj)` would pass the suite silently.
+  get_max_health=function(...)
+    assert(select("#", ...) == 0, "get_max_health takes no arguments")
+    return 300
+  end,
+  get_crafting_speed=function(...)
+    assert(select("#", ...) == 0, "get_crafting_speed takes no arguments")
+    return 0.5
+  end
 }
-prototypes.fluid = {water={name="water", default_temperature=15, max_temperature=100}}
+-- A product may be a range with a probability instead of a fixed amount.
+prototypes.recipe["sulfuric-acid"] = {
+  name="sulfuric-acid", category="chemistry", energy_required=1,
+  ingredients={{type="fluid", name="water", amount=100}},
+  products={{type="fluid", name="sulfuric-acid", amount_min=50, amount_max=100, probability=0.5}},
+}
+-- The same name as an item and as a fluid. A reverse lookup must not mix them.
+prototypes.item["test-shared"] = {name="test-shared", type="item", stack_size=10}
+prototypes.recipe["shared-item"] = {
+  name="shared-item", category="crafting", energy_required=1,
+  ingredients={{type="item", name="iron-plate", amount=1}},
+  products={{type="item", name="test-shared", amount=1}},
+}
+prototypes.recipe["shared-fluid"] = {
+  name="shared-fluid", category="chemistry", energy_required=1,
+  ingredients={{type="fluid", name="water", amount=10}},
+  products={{type="fluid", name="test-shared", amount=1}},
+}
+prototypes.fluid = {water={name="water", default_temperature=15, max_temperature=100},
+  ["test-shared"]={name="test-shared", default_temperature=25, max_temperature=25}}
 prototypes.technology = {logistics={
   name="logistics",
   prerequisites={{name="automation"}},
   effects={{type="unlock-recipe", recipe="fast-inserter"}}
-}}
+},
+  ["weapon-damage"]={
+    name="weapon-damage",
+    prerequisites={},
+    -- A bonus, not a recipe: the category, the modifier and its ceiling are the
+    -- answer to "what does this research give me".
+    effects={{type="ammo-damage", ammo_category={name="bullet"}, modifier=0.1, maximum=1.2}}
+  }
+}
 -- The research unit is per-force in Factorio 2.x, not on the prototype.
 game.forces.player = game.forces.player or {technologies={}}
 game.forces.player.technologies = {logistics={

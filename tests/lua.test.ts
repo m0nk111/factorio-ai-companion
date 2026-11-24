@@ -1053,3 +1053,69 @@ test("Lua: research_switch promotes a technology the way the research screen doe
   local cancelled = with_companion(function() u.handlers.research_cancel({companionId=1}) end)
   assert(cancelled.cancelled == "concrete", tostring(cancelled.cancelled))
 `));
+
+test("Lua: a ranged product keeps its bounds instead of answering nothing", () =>
+  run(`
+  local u = require("commands.init")
+  require("commands.prototype_info")
+
+  -- A chemistry recipe whose product is 50..100 with a probability. Reporting
+  -- only "amount" told the caller nothing about how much it makes.
+  local recipe = u.capture_response(function()
+    u.handlers.prototype_info({name="sulfuric-acid", kind="recipe"})
+  end)
+  assert(recipe.found, "the recipe must be found")
+  local product = recipe.products[1]
+  assert(product.name == "sulfuric-acid")
+  assert(product.amount == nil, "a ranged product has no fixed amount")
+  assert(product.amount_min == 50, "ondergrens: " .. tostring(product.amount_min))
+  assert(product.amount_max == 100, "bovengrens: " .. tostring(product.amount_max))
+  assert(product.probability == 0.5, "kans: " .. tostring(product.probability))
+`));
+
+test("Lua: a bonus research keeps the modifier it grants, not just its type", () =>
+  run(`
+  local u = require("commands.init")
+  require("commands.prototype_info")
+
+  -- "ammo-damage" is not a recipe unlock: the answer to "what does this give me"
+  -- is the category, the modifier and the ceiling.
+  local tech = u.capture_response(function()
+    u.handlers.prototype_info({name="weapon-damage", kind="technology"})
+  end)
+  assert(tech.found, "the technology must be found")
+  local effect = tech.effects[1]
+  assert(effect.type == "ammo-damage", tostring(effect.type))
+  assert(effect.modifier == 0.1, "modifier: " .. tostring(effect.modifier))
+  assert(effect.maximum == 1.2, "maximum: " .. tostring(effect.maximum))
+  assert(effect.ammo_category == "bullet", "de categorie als naam: " .. tostring(effect.ammo_category))
+
+  -- The recipe unlock still reads as before.
+  local unlock = u.capture_response(function()
+    u.handlers.prototype_info({name="logistics", kind="technology"})
+  end)
+  assert(unlock.effects[1].type == "unlock-recipe")
+  assert(unlock.effects[1].recipe == "fast-inserter")
+`));
+
+test("Lua: an item and a fluid sharing a name do not mix their recipes", () =>
+  run(`
+  local u = require("commands.init")
+  require("commands.prototype_info")
+
+  -- A mod may define an item and a fluid under one name. When the caller says
+  -- which one it meant, only that one may answer.
+  local item = u.capture_response(function()
+    u.handlers.prototype_info({name="test-shared", kind="item"})
+  end)
+  assert(item.kind == "item")
+  assert(item.recipes_producing_total == 1, "alleen het item-recept: " .. tostring(item.recipes_producing_total))
+  assert(item.recipes_producing[1] == "shared-item", tostring(item.recipes_producing[1]))
+
+  local fluid = u.capture_response(function()
+    u.handlers.prototype_info({name="test-shared", kind="fluid"})
+  end)
+  assert(fluid.kind == "fluid")
+  assert(fluid.recipes_producing_total == 1, "alleen het vloeistof-recept: " .. tostring(fluid.recipes_producing_total))
+  assert(fluid.recipes_producing[1] == "shared-fluid", tostring(fluid.recipes_producing[1]))
+`));
