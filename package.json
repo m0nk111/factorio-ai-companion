@@ -20,7 +20,7 @@
     "@openai/codex": "0.154.0",
     "zod": "4.3.5"
   },
-  "version": "0.18.3",
+  "version": "0.21.0",
   "scripts": {
     "dev": "bun scripts/dev.ts",
     "start": "bun src/dashboard/main.ts",
@@ -29,7 +29,7 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "validate": "bun scripts/validate-tools.ts",
-    "check": "bun run typecheck && bun run validate && bun test",
+    "check": "bun run typecheck && bun run validate && bun run format:check && bun test",
     "build": "bun scripts/build.ts",
     "doctor": "bun scripts/doctor.ts",
     "mod:install": "bun scripts/install-mod.ts",

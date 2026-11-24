@@ -8,6 +8,9 @@ COPY scripts ./scripts
 COPY factorio-mod ./factorio-mod
 COPY tests ./tests
 COPY tsconfig.json ./
+# Without the prettier config in the image, `bun run check` formats with
+# prettier's defaults and reports every file as unformatted.
+COPY .prettierrc.json ./
 RUN bun run generate && bun run check && bun run build
 
 FROM oven/bun:1.4.2

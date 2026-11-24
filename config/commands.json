@@ -332,10 +332,10 @@
           "description": "Optional: filter by resource type"
         },
         "radius": {
-          "default": 50,
+          "default": 100,
           "type": "integer",
           "minimum": 1,
-          "maximum": 256,
+          "maximum": 512,
           "description": "Search radius"
         }
       },
@@ -605,10 +605,10 @@
           "maximum": 1000
         },
         "radius": {
-          "default": 50,
+          "default": 100,
           "type": "integer",
           "minimum": 1,
-          "maximum": 256
+          "maximum": 512
         },
         "entityType": {
           "type": "string",
@@ -683,10 +683,10 @@
           "maximum": 1000
         },
         "radius": {
-          "default": 50,
+          "default": 100,
           "type": "integer",
           "minimum": 1,
-          "maximum": 256
+          "maximum": 512
         }
       },
       "required": [
@@ -1322,10 +1322,10 @@
           "maximum": 1000
         },
         "radius": {
-          "default": 20,
+          "default": 40,
           "type": "integer",
           "minimum": 1,
-          "maximum": 256
+          "maximum": 512
         }
       },
       "required": [
@@ -1487,11 +1487,11 @@
           "description": "0: first connected player or spawn; otherwise companion ID"
         },
         "radius": {
-          "default": 48,
+          "default": 96,
           "type": "integer",
           "minimum": 1,
-          "maximum": 96,
-          "description": "Observation radius in tiles. The game clamps the observation window to 8..96 tiles, so a smaller request still returns a valid clamped snapshot instead of failing validation."
+          "maximum": 192,
+          "description": "Observation radius in tiles. The game clamps the observation window to 8..192 tiles, so a smaller request still returns a valid clamped snapshot instead of failing validation. Only chunks within vision_radius or already charted are returned."
         }
       },
       "required": [
@@ -1612,10 +1612,10 @@
           "description": "Coal per burner"
         },
         "radius": {
-          "default": 64,
+          "default": 128,
           "type": "integer",
           "minimum": 1,
-          "maximum": 256,
+          "maximum": 512,
           "description": "Search radius"
         }
       },
@@ -2599,6 +2599,81 @@
     "description": "Read blueprint construction progress and blockers; final results remain readable after completion or cancellation.",
     "execution": "game",
     "effect": "read",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "companionId": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        }
+      },
+      "required": [
+        "companionId"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "prototype_info": {
+    "description": "Look up a prototype the way the in-game factoriopedia does: description, recipes that make or use it, crafting time, stack size and building statistics",
+    "execution": "game",
+    "effect": "read",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Prototype name, e.g. iron-gear-wheel, electronic-circuit, assembling-machine-1"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "item",
+            "recipe",
+            "entity",
+            "fluid",
+            "technology"
+          ],
+          "description": "Which prototype table to look in. Omit to search item, recipe, entity, fluid and technology in that order."
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "research_switch": {
+    "description": "Make a technology the active research, the way clicking it in the research screen does. The previous research stays in the queue.",
+    "execution": "game",
+    "effect": "act",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "companionId": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "technology": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "companionId",
+        "technology"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "research_cancel": {
+    "description": "Cancel the active research without choosing a replacement; the queue decides what runs next.",
+    "execution": "game",
+    "effect": "act",
     "inputSchema": {
       "type": "object",
       "properties": {

@@ -25,19 +25,21 @@ test("contract rejects unknown tools, extra arguments and invalid limits", () =>
   expect(() => validateToolArgs("companion_stop", { companionId: 1, surprise: true })).toThrow();
   expect(() => validateToolArgs("world_observe", { radius: 999 })).toThrow();
   expect(() => validateToolArgs("task_submit", { companionId: 1, steps: "[]" })).toThrow();
-  expect(validateToolArgs("world_observe", {})).toMatchObject({ companionId: 0, radius: 48 });
+  expect(validateToolArgs("world_observe", {})).toMatchObject({ companionId: 0, radius: 96 });
 });
 test("a small observation radius reaches the game and the schema advertises its clamp", () => {
   expect(validateToolArgs("world_observe", { radius: 5 })).toMatchObject({ radius: 5 });
   const radius = COMMANDS.world_observe!.inputSchema.properties.radius!;
   expect({ minimum: radius.minimum, maximum: radius.maximum, default: radius.default }).toEqual({
     minimum: 1,
-    maximum: 96,
-    default: 48,
+    maximum: 192,
+    default: 96,
   });
-  expect(String(radius.description)).toContain("8..96");
+  expect(String(radius.description)).toContain("8..192");
   expect(() => validateToolArgs("world_observe", { radius: 0 })).toThrow();
-  expect(() => validateToolArgs("world_observe", { radius: 97 })).toThrow();
+  expect(() => validateToolArgs("world_observe", { radius: 193 })).toThrow();
+  // The schema is the outer bound; the floor below 8 is the game's clamp, not a rejection.
+  expect(validateToolArgs("world_observe", { radius: 192 })).toMatchObject({ radius: 192 });
 });
 test("targeting commands describe their radius as a search radius", () => {
   for (const name of ["building_fill", "building_empty", "building_info", "building_fuel"])
@@ -66,7 +68,8 @@ test("every command's required fields are also declared properties", () => {
       if (!(field in properties)) problems.push(`${name}: required '${field}' is not a property`);
     if (schema.additionalProperties === false)
       for (const field of schema.required ?? [])
-        if (!(field in properties)) problems.push(`${name}: required '${field}' is rejected as additional`);
+        if (!(field in properties))
+          problems.push(`${name}: required '${field}' is rejected as additional`);
   }
   expect(problems).toEqual([]);
 });

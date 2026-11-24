@@ -64,7 +64,7 @@
     "water": 512,
     "tasks": 32,
     "errors": 10,
-    "vision_radius": 32
+    "vision_radius": 64
   },
   "entity_capabilities": {
     "assembling-machine": {

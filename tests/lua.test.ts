@@ -144,6 +144,14 @@ test("Lua: world_observe takes a radius the game clamps instead of rejecting the
   assert(result.radius==8, "the game must clamp the observation window to its 8-tile floor")
   assert(searched[1]==8 and searched[2]==8, "both observation queries must use the clamped radius")
   assert(result.entities_total==0)
+
+  -- The upper bound doubled with the defaults: 192 is honoured, anything above is clamped.
+  local big=require("commands.dispatch").call("world_observe",{companionId=1,radius=192})
+  assert(big.radius==192, "192 moet ongewijzigd doorkomen: " .. tostring(big.radius))
+  assert(big.limits.vision_radius==64, "zicht is verdubbeld naar 64: " .. tostring(big.limits.vision_radius))
+  -- Boven 192 beslist het schema, niet de Lua-klem: dat verzoek hoort geweigerd te worden.
+  local over=require("commands.dispatch").call("world_observe",{companionId=1,radius=400})
+  assert(over.radius==nil and over.error~=nil, "400 hoort door het schema geweigerd te worden")
 `));
 
 test("Lua: machine-only resources remain discoverable but cannot start a hand-mining job", () =>
@@ -826,4 +834,296 @@ test("Lua: help is callable with no arguments and filters on a name prefix", () 
 
   local none = u.capture_response(function() u.handlers.help({category="no-such-prefix"}) end)
   assert(none.count == 0)
+`));
+
+test("Lua: prototype_info answers what the factoriopedia answers", () =>
+  run(`
+  local u = require("commands.init")
+  require("commands.prototype_info")
+
+  -- An item: what it is, and which recipes make it and use it. The reverse
+  -- lookup is the question a companion actually asks ("where does this come from").
+  local item = u.capture_response(function()
+    u.handlers.prototype_info({name="iron-gear-wheel"})
+  end)
+  assert(item.found, "an existing prototype must be found")
+  assert(item.kind == "item", "item is searched before recipe: " .. tostring(item.kind))
+  assert(item.stack_size == 100, "stack size must come from the item prototype")
+  assert(item.subgroup == "intermediate-product")
+  assert(item.localised_name == "item-name.iron-gear-wheel", item.localised_name)
+  assert(#item.recipes_producing >= 1, "the recipe that makes it must be listed")
+  assert(item.recipes_producing[1] == "iron-gear-wheel", item.recipes_producing[1])
+  assert(item.recipes_producing_total == #item.recipes_producing)
+
+  -- The same name in another table: crafting time and ingredients.
+  local recipe = u.capture_response(function()
+    u.handlers.prototype_info({name="iron-gear-wheel", kind="recipe"})
+  end)
+  assert(recipe.found and recipe.kind == "recipe")
+  assert(recipe.crafting_time == 0.5, "crafting time is the recipe energy")
+  assert(recipe.category == "crafting")
+  assert(recipe.ingredients[1].name == "iron-plate" and recipe.ingredients[1].amount == 2)
+  assert(recipe.products[1].name == "iron-gear-wheel")
+
+  -- The other direction: what consumes it.
+  assert(#item.recipes_using >= 1, "recipes that consume it must be listed")
+  assert(item.recipes_using[1] == "automation-science-pack", item.recipes_using[1])
+
+  local missing = u.capture_response(function()
+    u.handlers.prototype_info({name="no-such-thing"})
+  end)
+  assert(missing.found == false)
+  assert(#missing.searched == 5, "a miss must say which tables were searched")
+`));
+
+test("Lua: prototype_info reads building statistics through the 2.x accessors", () =>
+  run(`
+  local u = require("commands.init")
+  require("commands.prototype_info")
+
+  -- In Factorio 2.x max_health and crafting_speed are get_* methods on the
+  -- prototype, and reading them as fields raises. A plain field read here would
+  -- take the whole answer down.
+  local entity = u.capture_response(function()
+    u.handlers.prototype_info({name="assembling-machine-1", kind="entity"})
+  end)
+  assert(entity.found and entity.kind == "entity")
+  assert(entity.max_health == 300, tostring(entity.max_health))
+  assert(entity.crafting_speed == 0.5, tostring(entity.crafting_speed))
+  assert(entity.tile_width == 3 and entity.tile_height == 3)
+  assert(entity.module_slots == 0)
+  assert(entity.energy_usage == 1250)
+
+  -- The technology table, including what it unlocks.
+  local tech = u.capture_response(function()
+    u.handlers.prototype_info({name="logistics", kind="technology"})
+  end)
+  assert(tech.found and tech.kind == "technology")
+  assert(tech.research_unit_count == 20, tostring(tech.research_unit_count))
+  assert(tech.research_unit_energy == 600)
+  assert(tech.research_unit_seconds == 10, "energy is ticks; a second is 60")
+  assert(tech.research_unit_ingredients[1].name == "automation-science-pack")
+  assert(tech.prerequisites[1] == "automation")
+  assert(tech.effects[1].recipe == "fast-inserter")
+
+  -- A fluid carries temperatures and the same reverse lookups.
+  local fluid = u.capture_response(function()
+    u.handlers.prototype_info({name="water"})
+  end)
+  assert(fluid.found and fluid.kind == "fluid")
+  assert(fluid.default_temperature == 15)
+
+  -- An unknown kind is refused instead of silently searching everything.
+  local bad = u.capture_response(function()
+    u.handlers.prototype_info({name="water", kind="nonsense"})
+  end)
+  assert(bad.error and bad.error:find("unknown kind"), tostring(bad.error))
+`));
+
+test("Lua: prototype_info puts the real recipe first and keeps recycling counted", () =>
+  run(`
+  local u = require("commands.init")
+  require("commands.prototype_info")
+
+  -- Space Age has a recycling recipe for nearly everything; without separation
+  -- "what makes an iron gear wheel" is answered with forty-seven grinders.
+  prototypes.recipe["iron-gear-wheel-recycling"] = {
+    name="iron-gear-wheel-recycling", energy=0.5, categories={"recycling"},
+    ingredients={{name="iron-gear-wheel", amount=1}},
+    products={{name="iron-plate", amount=1}}
+  }
+
+  local item = u.capture_response(function()
+    u.handlers.prototype_info({name="iron-gear-wheel"})
+  end)
+  assert(item.recipes_using[1] == "automation-science-pack",
+    "the real consumer comes first: " .. tostring(item.recipes_using[1]))
+  -- The totals count their own bucket: the real consumer, and the grinder apart.
+  assert(item.recipes_using_total == 1, tostring(item.recipes_using_total))
+  assert(item.recipes_using_recycling_total == 1, tostring(item.recipes_using_recycling_total))
+
+  -- The recipe that produces it is never a recycling recipe.
+  assert(item.recipes_producing[1] == "iron-gear-wheel", item.recipes_producing[1])
+  prototypes.recipe["iron-gear-wheel-recycling"] = nil
+`));
+
+test("Lua: building_info says when the answer is a neighbour, not the tile asked about", () =>
+  run(`
+  local entity_info = require("commands.entity_info")
+
+  -- A caller that asks about one tile and silently receives the adjacent machine
+  -- reads that machine's recipe and status as if they were the tile's. The
+  -- returned position was already honest; the payload now says it too.
+  local function surface_with(offset)
+    return {find_entities_filtered = function(filter)
+      local e = {valid=true, type="assembling-machine", name="assembling-machine-1",
+        position={x=filter.position.x + offset, y=filter.position.y}, direction=0,
+        force={name="player"}, health=300, max_health=300, status=1, unit_number=1,
+        prototype={items_to_place_this={{name="assembling-machine-1"}}},
+        get_recipe=function() return {name="iron-gear-wheel"} end,
+        get_inventory=function() return nil end}
+      return {e}
+    end}
+  end
+
+  local neighbour, on_tile = entity_info.resolve_on_tile(surface_with(1), {x=10.5, y=-10.5}, 2)
+  assert(neighbour, "a neighbour within the radius must still resolve")
+  assert(on_tile == false, "a building on the next tile is not on the requested tile")
+
+  local centred, centred_on_tile = entity_info.resolve_on_tile(surface_with(0), {x=10.5, y=-10.5}, 2)
+  assert(centred and centred_on_tile == true, "a building centred on the tile is on it")
+
+  local none = entity_info.resolve_on_tile({find_entities_filtered = function(filter) return {} end},
+    {x=10.5, y=-10.5}, 2)
+  assert(none == nil, "an empty area resolves to nothing rather than to a neighbour")
+`));
+
+test("Lua: research_set tells a queued technology apart from a rejected one", () =>
+  run(`
+  local u = require("commands.init")
+  require("commands.research")
+
+  -- add_research returns false both for "already queued" and for a real refusal.
+  -- Reporting both as "Failed" told a caller its request had been rejected while
+  -- the technology was already on its way.
+  local queued_tech = {name="gun-turret", researched=false, enabled=true, prerequisites={}}
+  local force = {
+    technologies = {["gun-turret"] = queued_tech, concrete = {name="concrete", researched=false, enabled=true, prerequisites={}}},
+    research_queue = {queued_tech},
+    current_research = {name="concrete"},
+    research_progress = 0.43,
+    add_research = function(name) return false end,
+  }
+  _G.game = {players = {}, forces = {player = force}}
+  local companion = {entity = {force = force, valid = true}}
+  local function with_companion(fn)
+    local original = u.find_companion
+    u.find_companion = function() return 1, companion end
+    local result = u.capture_response(fn)
+    u.find_companion = original
+    return result
+  end
+
+  local queued = with_companion(function() u.handlers.research_set({companionId=1, technology="gun-turret"}) end)
+  assert(queued.queued == true and queued.already_queued == true, "already queued is not a failure")
+  assert(queued.position == 1, tostring(queued.position))
+  assert(queued.error == nil, "no error when the technology is already queued")
+
+  local current = with_companion(function() u.handlers.research_set({companionId=1, technology="concrete"}) end)
+  assert(current.already_current == true, "the technology already being researched is not a failure")
+
+  -- A genuine refusal still says so, and says why instead of the word "Failed".
+  force.research_queue = {}
+  local refused = with_companion(function() u.handlers.research_set({companionId=1, technology="gun-turret"}) end)
+  assert(refused.error and refused.error:find("queue is disabled or full"), tostring(refused.error))
+`));
+
+test("Lua: research_switch promotes a technology the way the research screen does", () =>
+  run(`
+  local u = require("commands.init")
+  require("commands.research")
+
+  local logistics = {name="logistics-2", researched=false, enabled=true, prerequisites={}}
+  local concrete = {name="concrete", researched=false, enabled=true, prerequisites={}}
+  local locked = {name="laser-turret", researched=false, enabled=true, prerequisites={{name="laser", researched=false}}}
+  local force = {
+    technologies = {["logistics-2"]=logistics, concrete=concrete, ["laser-turret"]=locked,
+      laser={name="laser", researched=false}},
+    research_queue = {concrete},
+    current_research = concrete,
+    research_progress = 0.1,
+  }
+  -- Factorio's accessor is bound: called as a method, implemented as a closure. It
+  -- has to be attached after the table exists, or the name resolves to a global.
+  force.cancel_current_research = function() force.current_research = nil end
+  _G.game = {players = {}, forces = {player = force}}
+  local companion = {entity = {force = force, valid = true}}
+  local function with_companion(fn)
+    local original = u.find_companion
+    u.find_companion = function() return 1, companion end
+    local result = u.capture_response(fn)
+    u.find_companion = original
+    return result
+  end
+
+  local switched = with_companion(function() u.handlers.research_switch({companionId=1, technology="logistics-2"}) end)
+  assert(switched.error == nil, "onverwachte fout: " .. tostring(switched.error))
+  -- current_research is read only in 2.x, so promotion means reordering the queue:
+  -- the head is the active technology and everything else stays behind it.
+  assert(switched.queue[1] == "logistics-2", "kop van de queue: " .. tostring(switched.queue[1]))
+  assert(switched.queue[2] == "concrete", "de rest blijft staan: " .. tostring(switched.queue[2]))
+  assert(switched.previous == "concrete", "vorige: " .. tostring(switched.previous))
+
+  force.current_research = concrete
+  local blocked = with_companion(function() u.handlers.research_switch({companionId=1, technology="laser-turret"}) end)
+  assert(blocked.error and blocked.error:find("Missing"), tostring(blocked.error))
+
+  local cancelled = with_companion(function() u.handlers.research_cancel({companionId=1}) end)
+  assert(cancelled.cancelled == "concrete", tostring(cancelled.cancelled))
+`));
+
+test("Lua: a ranged product keeps its bounds instead of answering nothing", () =>
+  run(`
+  local u = require("commands.init")
+  require("commands.prototype_info")
+
+  -- A chemistry recipe whose product is 50..100 with a probability. Reporting
+  -- only "amount" told the caller nothing about how much it makes.
+  local recipe = u.capture_response(function()
+    u.handlers.prototype_info({name="sulfuric-acid", kind="recipe"})
+  end)
+  assert(recipe.found, "the recipe must be found")
+  local product = recipe.products[1]
+  assert(product.name == "sulfuric-acid")
+  assert(product.amount == nil, "a ranged product has no fixed amount")
+  assert(product.amount_min == 50, "ondergrens: " .. tostring(product.amount_min))
+  assert(product.amount_max == 100, "bovengrens: " .. tostring(product.amount_max))
+  assert(product.probability == 0.5, "kans: " .. tostring(product.probability))
+`));
+
+test("Lua: a bonus research keeps the modifier it grants, not just its type", () =>
+  run(`
+  local u = require("commands.init")
+  require("commands.prototype_info")
+
+  -- "ammo-damage" is not a recipe unlock: the answer to "what does this give me"
+  -- is the category, the modifier and the ceiling.
+  local tech = u.capture_response(function()
+    u.handlers.prototype_info({name="weapon-damage", kind="technology"})
+  end)
+  assert(tech.found, "the technology must be found")
+  local effect = tech.effects[1]
+  assert(effect.type == "ammo-damage", tostring(effect.type))
+  assert(effect.modifier == 0.1, "modifier: " .. tostring(effect.modifier))
+  assert(effect.maximum == 1.2, "maximum: " .. tostring(effect.maximum))
+  assert(effect.ammo_category == "bullet", "de categorie als naam: " .. tostring(effect.ammo_category))
+
+  -- The recipe unlock still reads as before.
+  local unlock = u.capture_response(function()
+    u.handlers.prototype_info({name="logistics", kind="technology"})
+  end)
+  assert(unlock.effects[1].type == "unlock-recipe")
+  assert(unlock.effects[1].recipe == "fast-inserter")
+`));
+
+test("Lua: an item and a fluid sharing a name do not mix their recipes", () =>
+  run(`
+  local u = require("commands.init")
+  require("commands.prototype_info")
+
+  -- A mod may define an item and a fluid under one name. When the caller says
+  -- which one it meant, only that one may answer.
+  local item = u.capture_response(function()
+    u.handlers.prototype_info({name="test-shared", kind="item"})
+  end)
+  assert(item.kind == "item")
+  assert(item.recipes_producing_total == 1, "alleen het item-recept: " .. tostring(item.recipes_producing_total))
+  assert(item.recipes_producing[1] == "shared-item", tostring(item.recipes_producing[1]))
+
+  local fluid = u.capture_response(function()
+    u.handlers.prototype_info({name="test-shared", kind="fluid"})
+  end)
+  assert(fluid.kind == "fluid")
+  assert(fluid.recipes_producing_total == 1, "alleen het vloeistof-recept: " .. tostring(fluid.recipes_producing_total))
+  assert(fluid.recipes_producing[1] == "shared-fluid", tostring(fluid.recipes_producing[1]))
 `));

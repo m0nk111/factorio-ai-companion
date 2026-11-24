@@ -159,6 +159,7 @@ require("commands.task")
 require("commands.world")
 require("commands.combat")
 require("commands.help")
+require("commands.prototype_info")
 player_input.bind_dispatcher(require("commands.dispatch"))
 
 -- Update companion map markers
