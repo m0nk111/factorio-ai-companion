@@ -760,7 +760,8 @@ test("Lua: fresh and upgraded saves keep chat opt-in per player and retain legac
   fac("chat",2);assert(not bar() and bar(second))
   configure();assert(not bar() and bar(second), "later upgrades retain explicit opt-in")
   bar(second).body.fac_message.text="Private draft"
-  click(bar(second).header.fac_hide_chat)
+  click(bar(second).header.fac_hide_chat,2)
+  assert(not bar(second) and storage.overlay[2].draft=="Private draft", "close stores the draft before player removal")
   emit("on_player_removed",nil,2)
   second=add_player(2);emit("on_player_created",nil,2)
   assert(not bar(second) and not storage.overlay[2])
