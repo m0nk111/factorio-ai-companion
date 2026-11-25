@@ -2,6 +2,8 @@
 
 A guided second player for Factorio: chat in the game or browser, inspect nearby terrain and machines, and let companions mine, craft and build with carried materials.
 
+**Independently maintained by m0nklabs.** Thank you to [Loïc Veillard](https://github.com/lveillard) for creating the [original AI Companion](https://github.com/lveillard/factorio-ai-companion), and to the upstream contributors who helped build it. This fork continues development under the [MIT license](LICENSE) with the original copyright notice intact. Follow this fork's [issues](https://github.com/m0nklabs/factorio-ai-companion/issues) and [releases](https://github.com/m0nklabs/factorio-ai-companion/releases) for our work.
+
 Requires **Bun 1.4.2+** and **Factorio 2.0.77+**. The included Codex app-server uses your ChatGPT subscription. Sign in through the dashboard using a browser or device code; Codex handles credential storage and renewal. No API key is required.
 
 ## Run locally
@@ -104,4 +106,4 @@ Codex integration follows the [official app-server protocol](https://developers.
 
 Change `package.json` and add the matching entry to `factorio-mod/changelog.txt`, then run `bun run generate`, `bun run check`, `bun run codex:smoke` and the relevant integration checks. `bun run mod:package` creates the uploadable ZIP with its generated metadata.
 
-Upload it from the existing mod's [downloads page](https://mods.factorio.com/mod/ai-companion/downloads), or put a key with **ModPortal: Upload Mods** scope in `.env` as `FACTORIO_MOD_UPLOAD_API_KEY` and run `bun run mod:publish`. This explicit command refuses an existing version and verifies the published file hash. Publish the matching bridge source alongside the mod so users can install the same command contract. The upload key is never required at runtime.
+Attach the ZIP to a [GitHub release on this fork](https://github.com/m0nklabs/factorio-ai-companion/releases) with its matching source tag. If the release needs a different bridge build, document its compatible source and version so users can install the matching command contract. The [existing Factorio Mod Portal listing](https://mods.factorio.com/mod/ai-companion) belongs to the upstream project and is not a publication target for this fork.
