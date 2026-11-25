@@ -66,7 +66,8 @@ test("every command's required fields are also declared properties", () => {
       if (!(field in properties)) problems.push(`${name}: required '${field}' is not a property`);
     if (schema.additionalProperties === false)
       for (const field of schema.required ?? [])
-        if (!(field in properties)) problems.push(`${name}: required '${field}' is rejected as additional`);
+        if (!(field in properties))
+          problems.push(`${name}: required '${field}' is rejected as additional`);
   }
   expect(problems).toEqual([]);
 });
