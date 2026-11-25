@@ -15,7 +15,9 @@ bun run start
 
 Open **http://127.0.0.1:3210**. Open **Settings** to sign in with ChatGPT. **Add companion** creates a character; **Mine**, **Follow me** and **Stop** run directly without model calls. Send a task with **Send & start**, or use `/fac gather iron` and `/fac 1 build a furnace` in Factorio. **Stop all** interrupts Codex and cancels native companion work. Messages received while paused remain queued; a restart starts paused and does not replay interrupted actions.
 
-In Factorio, use the movable chat bar's **To**, message box and **Send**. **Companions** (or `/fac`) opens spawn, follow, stop and remove controls. Web messages and agent progress also appear in game chat. The selected model persists across server restarts; new sessions default to Terra. Factory waits schedule another review instead of keeping the model polling.
+In Factorio, the companion chat bar starts hidden, including when upgrading a save that had the always-on bar. Use `/fac chat` to show or hide it for yourself, or use **Close** on the bar to hide it. The bar remembers your draft, recipient and drag position. `/fac gui` (or `/fac` without arguments) opens the companion manager without showing the chat bar; **Companions** on the bar opens the same manager. You can still send explicit commands such as `/fac 1 build a furnace` while the bar is hidden. Ordinary multiplayer chat is not forwarded to the AI.
+
+Web messages and agent progress also appear in game chat. The selected model persists across server restarts; new sessions default to Terra. Factory waits schedule another review instead of keeping the model polling.
 
 Close Factorio completely before editing its configuration: a running game can overwrite external changes when saving its settings. Enable RCON in `config.ini`, under `[other]`:
 

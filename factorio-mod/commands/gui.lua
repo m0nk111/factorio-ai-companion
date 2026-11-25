@@ -3,7 +3,9 @@ local input = require("commands.player_input")
 local contract = require("commands.contract")
 local cfg = u.settings.overlay
 local M = {}
+local MOD = "ai-companion"
 local BAR, PANEL = "fac_chat_bar", "fac_companion_panel"
+local ERROR_COOLDOWN_TICKS = 300 -- Five seconds at normal game speed, per GUI operation.
 
 local function preferences(player)
   storage.overlay = storage.overlay or {}
@@ -11,20 +13,66 @@ local function preferences(player)
   return storage.overlay[player.index]
 end
 
-local function companions(player)
-  local result = {}
+local function root(player, name)
+  local element = player.gui.screen[name]
+  if element and element.valid and element.get_mod() == MOD then return element end
+end
+
+local function remove(player, name)
+  local element = root(player, name)
+  if element then element.destroy() end
+end
+
+local function protect(operation, work, recover)
+  local ok, err = pcall(work)
+  if ok then return end
+  if recover then
+    local cleaned, cleanup_err = pcall(recover)
+    if not cleaned then err = tostring(err) .. "; cleanup: " .. tostring(cleanup_err) end
+  end
+  storage.overlay_error_ticks = storage.overlay_error_ticks or {}
+  local last = storage.overlay_error_ticks[operation]
+  if not last or game.tick - last >= ERROR_COOLDOWN_TICKS then
+    storage.overlay_error_ticks[operation] = game.tick
+    u.log_error(err, "gui:" .. operation)
+  end
+end
+
+local function recover_root(player, name)
+  -- Do not retry a broken build every tick. Leave the other window alone and
+  -- let the player reopen the affected window explicitly after the failure.
+  if name == BAR then preferences(player).chat_visible = false end
+  remove(player, name)
+end
+
+local function for_root(player, name, operation, work)
+  protect(operation, work, function() recover_root(player, name) end)
+end
+
+local function roster(player)
+  local result, signature = {}, {}
   for id, c in pairs(storage.companions or {}) do
     if c.entity and c.entity.valid and c.entity.force == player.force then
-      result[#result+1] = {id=id,name=c.name or ("#" .. id),entity=c.entity}
+      result[#result+1] = {id=id,name=c.name or ("#" .. id)}
     end
   end
   table.sort(result, function(a,b) return a.id < b.id end)
-  return result
+  for i, c in ipairs(result) do signature[i] = c.id .. ":" .. c.name end
+  return result, table.concat(signature,"|")
 end
 
-local function target(bar)
-  local select = bar.header.target
+local function target(select)
   return select.tags.ids[select.selected_index] or 0
+end
+
+local function remember_bar(player, bar)
+  if not bar then return end
+  local prefs = preferences(player)
+  -- An existing save may contain a partially constructed window from an older build.
+  local text = bar.body and bar.body.fac_message
+  if text then prefs.draft = text.text end
+  local select = bar.header and bar.header.target
+  if select and select.tags.ids then prefs.target = target(select) end
 end
 
 local function place(player, frame)
@@ -41,10 +89,8 @@ local function button(parent, name, caption, tags, tooltip)
   return parent.add{type="button",name=name,caption=caption,tags=tags or {},tooltip=tooltip}
 end
 
-function M.ensure(player)
-  local bar = player.gui.screen[BAR]
-  if bar then return bar end
-  bar = player.gui.screen.add{type="frame",name=BAR,direction="vertical"}
+local function build_bar(player)
+  local bar = player.gui.screen.add{type="frame",name=BAR,direction="vertical"}
   bar.style.width = cfg.width
   local header = bar.add{type="flow",name="header",direction="horizontal"}
   local handle = header.add{type="label",caption="To",tooltip="Drag to move chat"}
@@ -52,16 +98,61 @@ function M.ensure(player)
   local select = header.add{type="drop-down",name="target",items={"Codex"},selected_index=1,tags={ids={0}}}
   select.style.width = 160
   button(header,"fac_manage","Companions")
+  button(header,"fac_hide_chat","Close",nil,"Hide chat; /fac chat to reopen")
   local body = bar.add{type="flow",name="body",direction="horizontal"}
+  body.style.horizontally_stretchable = true
   local text = body.add{type="text-box",name="fac_message",text=preferences(player).draft or ""}
   text.word_wrap = true
-  text.style.width = cfg.width-100
+  -- Let the text box fill the space left by the Send button's natural width.
+  text.style.minimal_width = 80
+  text.style.horizontally_stretchable = true
   text.style.height = 52
   button(body,"fac_send","Send")
   local status = bar.add{type="label",name="status",caption="Waiting for connection"}
   status.style.font = "default-small"
   place(player,bar)
   return bar
+end
+
+local function refresh_bar(player, bar)
+  local list, signature = roster(player)
+  local select = bar.header.target
+  if select.tags.signature ~= signature then
+    local prefs = preferences(player)
+    local selected = prefs.target or target(select)
+    local ids, names = {0}, {"Codex"}
+    local index = 1
+    for _, c in ipairs(list) do
+      ids[#ids+1], names[#names+1] = c.id, c.name .. " #" .. c.id
+      if c.id == selected then index = #ids end
+    end
+    select.items = names
+    select.selected_index = index
+    select.tags = {ids=ids,signature=signature}
+    prefs.target = ids[index]
+  end
+  local connected = storage.bridge_last_poll_tick and game.tick-storage.bridge_last_poll_tick <= cfg.connection_timeout_ticks
+  bar.status.caption = connected and "Connected" or "Waiting for connection"
+end
+
+local function hide_chat(player)
+  local bar = root(player, BAR)
+  remember_bar(player, bar)
+  preferences(player).chat_visible = false
+  if bar then bar.destroy() end
+end
+
+function M.toggle_chat(player)
+  for_root(player, BAR, "toggle_chat", function()
+    local prefs = preferences(player)
+    if prefs.chat_visible then
+      hide_chat(player)
+    else
+      local bar = root(player, BAR) or build_bar(player)
+      refresh_bar(player, bar)
+      prefs.chat_visible = true
+    end
+  end)
 end
 
 local function activity(id)
@@ -76,97 +167,88 @@ local function activity(id)
   return "Idle"
 end
 
-function M.refresh(player)
-  local bar = M.ensure(player)
-  local list = companions(player)
-  local ids, names, signature = {0}, {"Codex"}, {}
-  for _, c in ipairs(list) do
-    ids[#ids+1], names[#names+1] = c.id, c.name .. " #" .. c.id
-    signature[#signature+1] = c.id .. ":" .. c.name
-  end
-  signature = table.concat(signature,"|")
-  local selected = preferences(player).target or target(bar)
-  if bar.header.target.tags.signature ~= signature then
-    bar.header.target.items = names
-    bar.header.target.tags = {ids=ids,signature=signature}
-    bar.header.target.selected_index = 1
-    for i,id in ipairs(ids) do if id == selected then bar.header.target.selected_index = i end end
-    preferences(player).target = target(bar)
-  end
-  local connected = storage.bridge_last_poll_tick and game.tick-storage.bridge_last_poll_tick <= cfg.connection_timeout_ticks
-  bar.status.caption = connected and "Connected" or "Waiting for connection"
-  local panel = player.gui.screen[PANEL]
-  if not panel then return end
+local function refresh_panel(player, panel)
+  local list, signature = roster(player)
   if panel.roster.tags.signature ~= signature then
     panel.roster.clear()
-    panel.roster.tags = {signature=signature}
     if #list == 0 then panel.roster.add{type="label",caption="No companions"} end
     for _, c in ipairs(list) do
       local row = panel.roster.add{type="flow",name="companion_" .. c.id,direction="horizontal"}
       local label = row.add{type="label",caption=c.name .. " #" .. c.id}
       label.style.width = 150
-      local state = row.add{type="label",name="state"}
-      state.style.width = 150
+      -- `state` is reserved by LuaGuiElement, even on non-checkbox elements.
+      local status = row.add{type="label",name="fac_activity"}
+      status.style.width = 150
       for i, action in ipairs(cfg.actions) do
         button(row,"action_" .. i,action.caption,{fac_action=i,cid=c.id},action.tooltip)
       end
     end
+    panel.roster.tags = {signature=signature}
   end
-  for _, c in ipairs(list) do panel.roster["companion_" .. c.id].state.caption = activity(c.id) end
+  for _, c in ipairs(list) do panel.roster["companion_" .. c.id].fac_activity.caption = activity(c.id) end
 end
 
-function M.open(player)
-  local existing = player.gui.screen[PANEL]
-  if existing then existing.bring_to_front();player.opened=existing;return end
+local function build_panel(player)
   local panel = player.gui.screen.add{type="frame",name=PANEL,direction="vertical",caption="Companions"}
   local create = panel.add{type="flow",name="create",direction="horizontal"}
   create.add{type="textfield",name="fac_name",text="",tooltip="Companion name (optional)"}
   button(create,"fac_spawn","Spawn")
-  local roster = panel.add{type="scroll-pane",name="roster",horizontal_scroll_policy="never"}
-  roster.style.maximal_height = 340
+  local pane = panel.add{type="scroll-pane",name="roster",horizontal_scroll_policy="never"}
+  pane.style.maximal_height = 340
   panel.add{type="label",name="error",caption=""}
   local footer = panel.add{type="flow",name="footer",direction="horizontal"}
   button(footer,"fac_reset_position","Reset chat position")
   button(footer,"fac_close","Close")
   panel.auto_center = true
-  player.opened = panel
-  M.refresh(player)
+  return panel
 end
 
-function M.send(player)
-  local bar = M.ensure(player)
-  local message, err = input.send(player,bar.body.fac_message.text,target(bar))
+function M.open(player)
+  for_root(player, PANEL, "open_manager", function()
+    local panel = root(player, PANEL) or build_panel(player)
+    refresh_panel(player, panel)
+    panel.bring_to_front()
+    if player.opened ~= panel then player.opened = panel end
+  end)
+end
+
+local function send(player, bar)
+  local message, err = input.send(player,bar.body.fac_message.text,target(bar.header.target))
   if not message then bar.status.caption=err;return end
-  bar.body.fac_message.text = ""
   preferences(player).draft = ""
+  bar.body.fac_message.text = ""
   bar.body.fac_send.focus()
   bar.status.caption = "Sent"
 end
 
-local function spawn(player)
-  local panel = player.gui.screen[PANEL]
+local function spawn(player, panel)
   local id, maximum = 1, contract.companion_spawn.inputSchema.properties.companionId.maximum
   while storage.companions[id] and id <= maximum do id=id+1 end
   local name = panel.create.fac_name.text:match("^%s*(.-)%s*$")
   local result = input.control(player,"companion_spawn",{companionId=id,name=name~="" and name or nil})
   panel.error.caption = result.error or ""
   if not result.error then panel.create.fac_name.text="" end
-  M.refresh(player)
+  refresh_panel(player, panel)
 end
 
-function M.click(event)
-  local e = event.element
-  if not e or not e.valid then return end
-  local owner = e
-  while owner and owner.name ~= BAR and owner.name ~= PANEL do owner=owner.parent end
-  if not owner then return end
-  local player = game.get_player(event.player_index)
-  if not player then return end
-  if e.name == "fac_send" then M.send(player)
-  elseif e.name == "fac_manage" then M.open(player)
-  elseif e.name == "fac_close" then player.gui.screen[PANEL].destroy()
-  elseif e.name == "fac_spawn" then spawn(player)
-  elseif e.name == "fac_reset_position" then preferences(player).location=nil;place(player,M.ensure(player))
+local function reset_position(player)
+  for_root(player, BAR, "reset_position", function()
+    preferences(player).location = nil
+    local bar = root(player, BAR)
+    if bar then place(player, bar) end
+  end)
+end
+
+local function click(player, e, owner, name)
+  if name == BAR then
+    if e.name == "fac_send" then send(player, owner)
+    elseif e.name == "fac_manage" then M.open(player)
+    elseif e.name == "fac_hide_chat" then hide_chat(player) end
+    return
+  end
+  if e.name == "fac_close" then owner.destroy()
+  elseif e.name == "fac_spawn" then spawn(player, owner)
+  elseif e.name == "fac_reset_position" then reset_position(player)
   elseif e.tags.fac_action then
     local action, cid = cfg.actions[e.tags.fac_action], e.tags.cid
     local c = u.get_companion(cid)
@@ -174,54 +256,96 @@ function M.click(event)
     local args = {companionId=cid}
     if action.player_argument then args[action.player_argument]=player.name end
     local result = input.control(player,action.tool,args)
-    local panel = player.gui.screen[PANEL]
-    if panel then panel.error.caption=result.error or "" end
-    M.refresh(player)
+    owner.error.caption = result.error or ""
+    refresh_panel(player, owner)
   end
 end
 
 function M.rebuild()
   for _, player in pairs(game.players) do
-    local bar = player.gui.screen[BAR]
-    if bar then
-      preferences(player).draft=bar.body.fac_message.text
-      preferences(player).target=target(bar)
-      bar.destroy()
-    end
-    if player.gui.screen[PANEL] then player.gui.screen[PANEL].destroy() end
-    M.refresh(player)
+    for_root(player, PANEL, "rebuild_manager", function() remove(player, PANEL) end)
+    for_root(player, BAR, "rebuild_chat", function()
+      local bar = root(player, BAR)
+      remember_bar(player, bar)
+      if bar then bar.destroy() end
+      -- Legacy saves have no explicit visibility preference: retire their old bar.
+      if preferences(player).chat_visible then refresh_bar(player, build_bar(player)) end
+    end)
   end
+end
+
+local function refresh(player)
+  for_root(player, BAR, "refresh_chat", function()
+    local prefs = storage.overlay and storage.overlay[player.index]
+    if prefs and prefs.chat_visible then
+      refresh_bar(player, root(player, BAR) or build_bar(player))
+    end
+  end)
+  for_root(player, PANEL, "refresh_manager", function()
+    local panel = root(player, PANEL)
+    if panel then refresh_panel(player, panel) end
+  end)
 end
 
 function M.tick()
-  for _, player in pairs(game.connected_players) do M.refresh(player) end
+  for _, player in pairs(game.connected_players) do refresh(player) end
 end
 
-script.on_event(defines.events.on_gui_click,M.click)
-script.on_event(defines.events.on_gui_confirmed,function(event)
-  if event.element.name == "fac_name" then spawn(game.get_player(event.player_index)) end
+local function gui_event(event_type, operation, handle)
+  script.on_event(event_type,function(event)
+    local player, name
+    protect(operation, function()
+      local e = event.element
+      if not e or not e.valid or e.get_mod() ~= MOD then return end
+      player = game.get_player(event.player_index)
+      if not player or not player.valid then return end
+      local bar, panel = root(player, BAR), root(player, PANEL)
+      local owner = e
+      while owner and owner ~= bar and owner ~= panel do owner = owner.parent end
+      if not owner then return end
+      name = owner == bar and BAR or PANEL
+      handle(player, e, owner, name)
+    end, function()
+      if name then recover_root(player, name) end
+    end)
+  end)
+end
+
+gui_event(defines.events.on_gui_click,"click",click)
+gui_event(defines.events.on_gui_confirmed,"confirm",function(player, e, owner, name)
+  if name == PANEL and e == owner.create.fac_name then spawn(player, owner) end
 end)
-script.on_event(defines.events.on_gui_closed,function(event)
-  if event.element and event.element.valid and event.element.name == PANEL then event.element.destroy() end
+gui_event(defines.events.on_gui_closed,"close",function(_, e, owner, name)
+  if name == PANEL and e == owner then owner.destroy() end
 end)
-script.on_event(defines.events.on_gui_text_changed,function(event)
-  if event.element.name == "fac_message" then preferences(game.get_player(event.player_index)).draft=event.element.text end
+gui_event(defines.events.on_gui_text_changed,"draft",function(player, e, owner, name)
+  if name == BAR and e == owner.body.fac_message then preferences(player).draft = e.text end
 end)
-script.on_event(defines.events.on_gui_selection_state_changed,function(event)
-  if event.element.name == "target" and event.element.parent and event.element.parent.parent
-      and event.element.parent.parent.name == BAR then
-    preferences(game.get_player(event.player_index)).target=target(event.element.parent.parent)
-  end
+gui_event(defines.events.on_gui_selection_state_changed,"selection",function(player, e, owner, name)
+  if name == BAR and e == owner.header.target then preferences(player).target = target(e) end
 end)
-script.on_event(defines.events.on_gui_location_changed,function(event)
-  if event.element.name == BAR then preferences(game.get_player(event.player_index)).location=event.element.location end
+gui_event(defines.events.on_gui_location_changed,"location",function(player, e, owner, name)
+  if name == BAR and e == owner then preferences(player).location = e.location end
 end)
-script.on_event({defines.events.on_player_created,defines.events.on_player_joined_game},function(event)
-  M.refresh(game.get_player(event.player_index))
+
+local function player_event(event_types, operation, handle)
+  script.on_event(event_types,function(event)
+    protect(operation, function()
+      local player = game.get_player(event.player_index)
+      if player and player.valid then handle(player) end
+    end)
+  end)
+end
+
+player_event({defines.events.on_player_created,defines.events.on_player_joined_game},"join",refresh)
+script.on_event(defines.events.on_player_removed,function(event)
+  if storage.overlay then storage.overlay[event.player_index] = nil end
 end)
-script.on_event({defines.events.on_player_display_resolution_changed,defines.events.on_player_display_scale_changed},function(event)
-  local player=game.get_player(event.player_index)
-  place(player,M.ensure(player))
+player_event({defines.events.on_player_display_resolution_changed,defines.events.on_player_display_scale_changed},"resize",function(player)
+  for_root(player, BAR, "place_chat", function()
+    local bar = root(player, BAR)
+    if bar then place(player,bar) end
+  end)
 end)
 
 return M

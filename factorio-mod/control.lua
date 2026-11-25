@@ -125,6 +125,11 @@ local function handle_fac(cmd)
       if player then gui.open(player) end
       return
     end
+    if param:match("^chat%s*$") then
+      if not player then error("Run /fac chat as a player") end
+      gui.toggle_chat(player)
+      return
+    end
     local first, rest = param:match("^(%S+)%s+(.+)$")
     if first and rest and not subcommands[first] then
       local id, comp = u.find_companion(first)
