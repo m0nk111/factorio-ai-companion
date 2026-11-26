@@ -720,11 +720,61 @@ test("Lua: replanning from the same position does not extend a task's movement d
 `,
   ));
 
+test("Lua: fresh and upgraded saves keep chat opt-in per player and retain legacy drafts", () =>
+  run(
+    guiFixture +
+      `
+  local second=add_player(2)
+  init()
+  assert(not bar() and not bar(second))
+  -- Build the shape the old release would have saved and discard the new opt-in flag.
+  fac("chat")
+  bar().body.fac_message.text="Legacy draft"
+  bar().header.target.selected_index=2
+  bar().location={x=42,y=80};emit("on_gui_location_changed",bar())
+  storage.overlay[1].chat_visible=nil
+  configure()
+  assert(storage.companions[1].entity==entity and not bar())
+  for _,name in ipairs({"on_player_created","on_player_joined_game","on_player_display_resolution_changed","on_player_display_scale_changed"}) do
+    emit(name);emit(name,nil,2)
+  end
+  refresh_tick()
+  assert(not bar() and not bar(second))
+  fac("gui")
+  assert(panel().roster.companion_1.fac_activity.caption=="Idle" and not bar())
+  click(panel().footer.fac_close);assert(not panel() and not player.opened)
+  fac();assert(panel() and not bar())
+  emit("on_gui_closed",panel());assert(not panel())
+  fac("1 build a furnace")
+  assert(#storage.companion_messages==1 and storage.companion_messages[1].target_companion==1)
+  assert(storage.companion_messages[1].message=="build a furnace")
+  assert(handlers[events.on_console_chat]==nil, "native chat must not be forwarded")
+  fac("chat with Codex")
+  assert(not bar() and storage.companion_messages[2].message=="chat with Codex")
+  fac("chat")
+  assert(bar().body.fac_message.text=="Legacy draft" and bar().header.target.selected_index==2)
+  assert(bar().location.x==42 and bar().location.y==80 and not bar(second))
+  click(bar().header.fac_hide_chat)
+  refresh_tick();emit("on_player_joined_game");emit("on_player_display_scale_changed")
+  assert(not bar() and not bar(second))
+  fac("chat",2);assert(not bar() and bar(second))
+  configure();assert(not bar() and bar(second), "later upgrades retain explicit opt-in")
+  bar(second).body.fac_message.text="Private draft"
+  click(bar(second).header.fac_hide_chat,2)
+  assert(not bar(second) and storage.overlay[2].draft=="Private draft", "close stores the draft before player removal")
+  emit("on_player_removed",nil,2)
+  second=add_player(2);emit("on_player_created",nil,2)
+  assert(not bar(second) and not storage.overlay[2])
+  fac("chat",2);assert(bar(second).body.fac_message.text=="")
+  fac("chat");assert(bar().body.fac_message.text=="Legacy draft")
+`,
+  ));
+
 test("Lua: overlay routes multiline chat, preserves drafts and survives a vanished recipient", () =>
   run(
     guiFixture +
       `
-  gui.refresh(player)
+  fac("chat")
   assert(bar().header.target.items[2]=="Atlas #1")
   bar().header.target.selected_index=2
   bar().body.fac_message.text="  Build a lab\\nthen check power  "
@@ -734,12 +784,12 @@ test("Lua: overlay routes multiline chat, preserves drafts and survives a vanish
   assert(bar().body.fac_message.text=="")
   click(bar().body.fac_send)
   assert(#storage.companion_messages==1,"Blank submission must not enqueue a request")
-  bar().body.fac_message.text="Unsent draft";gui.rebuild()
+  bar().body.fac_message.text="Unsent draft";configure()
   assert(bar().body.fac_message.text=="Unsent draft" and bar().header.target.selected_index==2)
-  storage.companions[1]=nil;gui.refresh(player)
+  storage.companions[1]=nil;refresh_tick()
   assert(bar().header.target.selected_index==1 and bar().body.fac_message.text=="Unsent draft")
   player.display_resolution={width=800,height=600};player.display_scale=1.5
-  handlers[defines.events.on_player_display_resolution_changed]{player_index=1}
+  emit("on_player_display_resolution_changed")
   assert(bar().location.x>=0 and bar().location.x+u.settings.overlay.width*1.5<=800)
 `,
   ));
@@ -748,15 +798,8 @@ test("Lua: overlay controls use validated commands and send a cancellation event
   run(
     guiFixture +
       `
-  gui.refresh(player);click(bar().header.fac_manage)
+  fac("chat");click(bar().header.fac_manage)
   local calls={}
-  -- Load the production dispatcher with every contract entry present; replace only the actions under test.
-  for name,def in pairs(require("commands.contract")) do
-    if def.execution=="game" and not u.handlers[name] then u.handlers[name]=function() u.json_response{} end end
-  end
-  -- control.lua loads the dispatcher once every handler is registered; a click
-  -- is an event, so nothing may require it lazily from inside the handler.
-  require("commands.dispatch")
   u.handlers.companion_stop=function(args)
     calls[#calls+1]=args.companionId
     require("commands.lifecycle").stop(args.companionId)
@@ -775,6 +818,79 @@ test("Lua: overlay controls use validated commands and send a cancellation event
   panel().create.fac_name.text="Almendra";click(panel().create.fac_spawn)
   assert(storage.companion_messages[2].control.tool=="companion_spawn")
   assert(panel().create.fac_name.text=="")
+`,
+  ));
+
+test("Lua: registered GUI callbacks ignore same-named foreign, stale and other-player elements", () =>
+  run(
+    guiFixture +
+      `
+  local second=add_player(2)
+  fac("chat");fac("gui");fac("chat",2);fac("gui",2)
+  local function foreign_events(owner)
+    local other=element({type="screen"},nil,owner,1)
+    local b=other.add{type="frame",name="fac_chat_bar"}
+    local p=other.add{type="frame",name="fac_companion_panel"}
+    click(b.add{type="button",name="fac_send"})
+    click(p.add{type="button",name="fac_close"})
+    click(p.add{type="button",tags={fac_action=2,cid=1}})
+    emit("on_gui_confirmed",p.add{type="textfield",name="fac_name",text="Wrong"})
+    emit("on_gui_closed",p)
+    emit("on_gui_text_changed",b.add{type="text-box",name="fac_message",text="Wrong"})
+    local header=b.add{type="flow",name="header"}
+    emit("on_gui_selection_state_changed",header.add{type="drop-down",name="target",tags={ids={1}},selected_index=1})
+    b.location={x=13,y=37};emit("on_gui_location_changed",b)
+    assert(p.valid and b.valid)
+  end
+  foreign_events("another-mod")
+  foreign_events("ai-companion") -- even our names outside the actual roots aren't ours to handle
+  click(bar(second).header.fac_hide_chat)
+  emit("on_gui_closed",panel(second))
+  local invalid=element({type="textfield",name="fac_name"},nil,"ai-companion",1)
+  invalid.destroy();emit("on_gui_confirmed",invalid);emit("on_gui_closed")
+  assert(bar() and panel() and bar(second) and panel(second))
+  assert(#storage.errors==0 and #storage.companion_messages==0)
+  assert(storage.overlay[1].draft==nil and storage.overlay[1].target==0 and storage.overlay[1].location==nil)
+  local draft=bar().body.fac_message;draft.text="Mine"
+  emit("on_gui_text_changed",draft)
+  bar().header.target.selected_index=2;emit("on_gui_selection_state_changed",bar().header.target)
+  assert(storage.overlay[1].draft=="Mine" and storage.overlay[1].target==1)
+`,
+  ));
+
+test("Lua: GUI failures are contained, partial windows are removed, and diagnostic logging is throttled", () =>
+  run(
+    guiFixture +
+      `
+  local second=add_player(2)
+  fac("chat");fac("gui",2)
+  local function broken_row(args,index)
+    if index==1 and args.name=="fac_activity" then error("Injected row build failure") end
+  end
+  fail_add=broken_row
+  for _=1,4 do click(bar().header.fac_manage);assert(not panel() and not player.opened and bar()) end
+  assert(#storage.errors==1 and storage.errors[1].context=="gui:open_manager")
+  fail_add=nil;fac("gui");assert(panel().roster.companion_1.fac_activity.caption=="Idle")
+  storage.companions[2]={entity=entity,name="Second"}
+  fail_add=broken_row;refresh_tick()
+  assert(not panel() and bar() and panel(second).roster.companion_2)
+  assert(#storage.errors==2 and storage.errors[2].context=="gui:refresh_manager")
+  refresh_tick();assert(not panel() and #storage.errors==2)
+  fail_add=nil;fac("gui")
+  local input=require("commands.player_input")
+  input.control=function() error("Injected confirm failure") end
+  emit("on_gui_confirmed",panel().create.fac_name)
+  assert(not panel() and bar() and storage.errors[3].context=="gui:confirm")
+  local draft=bar().body.fac_message;draft.text="Recover me";emit("on_gui_text_changed",draft)
+  player.display_resolution=nil
+  emit("on_player_display_resolution_changed")
+  assert(not bar() and storage.errors[4].context=="gui:place_chat")
+  player.display_resolution={width=1920,height=1080}
+  fail_add=function(args) if args.name=="fac_message" then error("Injected chat build failure") end end
+  fac("chat");assert(not bar() and storage.errors[5].context=="gui:toggle_chat")
+  fail_add=nil;refresh_tick();emit("on_player_joined_game");assert(not bar())
+  fac("chat");assert(bar().body.fac_message.text=="Recover me")
+  fac("gui");assert(panel().roster.companion_2 and #storage.companion_messages==0)
 `,
   ));
 
